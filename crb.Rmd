@@ -1,0 +1,638 @@
+# load data and libraries
+```{r}
+library(readxl)
+library(dplyr)
+
+cr <- read_xlsx("data/CRB eDNA results.xlsx", sheet = "Roller")
+cm <- read_xlsx("data/CRB eDNA results.xlsx", sheet = "Mulch")
+
+# Format 'visual plus roller eDNA' occupancy model
+visroll.array <- simplify2array(list(vis.matrix, eDNA.matrix))
+visroll.matrix <- apply(visroll.array, c(1,2), max)
+
+# Bundle and summarize data set
+skink.jags.data.eDNA <- list(y = y.eDNA, 
+                               z = ifelse(z.both > 0, 1, NA),
+                           n.boards = nrow(y.eDNA), 
+                           n.visits = ncol(y.eDNA), 
+                           n.PCRrep = dim(y.eDNA)[3],
+                           season.psi = season[,1],
+                           material.psi = material[,1],
+                           season = season,
+                           material = material)
+
+# Bundle visual occupancy model data set for JAGS
+skink.jags.data.visual <- list(y = vis.matrix, 
+                               z = ifelse(z.both > 0, 1, NA),
+                           n.boards = nrow(vis.matrix), 
+                           n.visits = ncol(vis.matrix),
+                           season = season,
+                           material = material,
+                           season.psi = season[,1],
+                           material.psi = material[,1])
+
+# Bundle "roller + visual" occupancy model data set for JAGS
+skink.jags.data.visroll <- list(y = visroll.matrix, 
+                               z = ifelse(z.both > 0, 1, NA),
+                           n.boards = nrow(vis.matrix), 
+                           n.visits = ncol(vis.matrix),
+                           season = season,
+                           material = material,
+                           season.psi = season[,1],
+                           material.psi = material[,1])
+
+```
+
+# Define visit-level occupancy model in BUGS language
+Can apply to either visual or eDNA detection/non-detection data.
+```{r}
+sink("scripts/skink_occupancy.txt")
+cat("
+model {
+
+# Priors
+mean.psi ~ dunif(0, 1)        # Occupancy intercept on prob. scale
+gamma0 <- logit(mean.psi)      #   same on logit scale
+gamma.season ~ dnorm(0, 0.1)   # Covariates on logit(occupancy)
+gamma.material ~ dnorm(0, 0.1)   # Covariates on logit(occupancy)
+
+mean.p ~ dunif(0, 1)          # Detection intercept on prob. scale
+alpha0 <- logit(mean.p)       #   same on logit scale
+alpha.season ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+alpha.material ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+
+# Likelihood
+for (i in 1:n.boards) {
+  z[i] ~ dbern(psi[i])
+  logit(psi[i]) <- gamma0 + gamma.season * season.psi[i] +
+                   gamma.material * material.psi[i]
+   for (j in 1:n.visits) {
+      y[i,j] ~ dbern(z[i] * p[i,j])
+      logit(p[i,j]) <- alpha0 + alpha.season * season[i,j] +
+                       alpha.material * material[i,j]
+   }
+}
+
+# Derived quantities
+# board-level occupancy
+logit(psi.boards.fall.wood) <- gamma0 + gamma.season + gamma.material
+logit(psi.boards.fall.metal) <- gamma0 + gamma.season
+logit(psi.boards.spring.wood) <- gamma0 + gamma.material
+logit(psi.boards.spring.metal) <- gamma0
+
+# detection probability
+logit(p.fall.wood) <- alpha0 + alpha.season + alpha.material
+logit(p.fall.metal) <- alpha0 + alpha.season
+logit(p.spring.wood) <- alpha0 + alpha.material
+logit(p.spring.metal) <- alpha0
+
+# Cumulative board-level detection probability for 1-20 visits/board (visual)
+# assuming best season/material
+for(i in 1:20){
+p_board_n_spring[i] <- (1 - (1 - p.spring.metal)^i)
+p_board_n_fall[i] <- (1 - (1 - p.fall.metal)^i)
+}
+
+# Vists/board required to reach 95% certainty of detecting skinks within occupied areas
+n_spring <- log(20) / (-log(1 - p.spring.metal))
+n_fall <- log(20) / (-log(1 - p.fall.metal))
+
+}
+
+",fill=TRUE)
+sink()
+
+```
+# Run Visual occupany model in JAGS
+```{r}
+# Initial values
+inits <- function() list(int.psi = runif(1), 
+                         int.p = runif(1), 
+                         gamma.season = rnorm(1, 0, 1),
+                         alpha.season = rnorm(1,0,1),
+                         gamma.material = rnorm(1, 0, 1),
+                         alpha.material = rnorm(1,0,1))
+
+# Parameters monitored
+params <- c("gamma0", "gamma.season", "gamma.material",
+            "alpha0", "alpha.season", "alpha.material",
+            "psi.boards.fall.wood", "psi.boards.spring.wood",
+            "psi.boards.fall.metal", "psi.boards.spring.metal",
+            "p.fall.wood", "p.spring.wood",
+            "p.fall.metal", "p.spring.metal",
+            "p_board_n_spring", "p_board_n_fall",
+            "n_spring", "n_fall")
+
+#####################################
+#### Run jags model
+#####################################
+skink_visual <- jagsUI::jags(data = skink.jags.data.visual,
+                         inits = inits,
+                         parameters.to.save = params,
+                         model.file = "scripts/skink_occupancy.txt",
+                         n.chains = 3,
+                         n.adapt = NULL,
+                         n.burnin = 10000,
+                         n.iter = 160000, 
+                         n.thin = 10,
+                         parallel = T,
+                         verbose = TRUE,
+                         modules = NULL)
+
+# saveRDS(skink_visual, "output/skink_visual_jags_mod_material.rds")
+skink_visual <- readRDS("output/skink_visual_jags_mod_material.rds")
+
+# Examine model output
+skink_visual
+
+# Examine traceplots
+# jagsUI::traceplot(skink_visual)
+
+```
+# Run "visual + roller eDNA" occupany model in JAGS
+note: it's the identical model to the visual model
+```{r}
+# Initial values
+inits <- function() list(int.psi = runif(1), 
+                         int.p = runif(1), 
+                         gamma.season = rnorm(1, 0, 1),
+                         alpha.season = rnorm(1,0,1),
+                         gamma.material = rnorm(1, 0, 1),
+                         alpha.material = rnorm(1,0,1))
+
+# Parameters monitored
+params <- c("gamma0", "gamma.season", "gamma.material",
+            "alpha0", "alpha.season", "alpha.material",
+            "psi.boards.fall.wood", "psi.boards.spring.wood",
+            "psi.boards.fall.metal", "psi.boards.spring.metal",
+            "p.fall.wood", "p.spring.wood",
+            "p.fall.metal", "p.spring.metal",
+            "p_board_n_spring", "p_board_n_fall",
+            "n_spring", "n_fall")
+
+#####################################
+#### Run jags model
+#####################################
+skink_visroll <- jagsUI::jags(data = skink.jags.data.visroll,
+                         inits = inits,
+                         parameters.to.save = params,
+                         model.file = "scripts/skink_occupancy.txt",
+                         n.chains = 3,
+                         n.adapt = NULL,
+                         n.burnin = 10000,
+                         n.iter = 160000, 
+                         n.thin = 10,
+                         parallel = T,
+                         verbose = TRUE,
+                         modules = NULL)
+
+# saveRDS(skink_visroll, "output/skink_visroll_jags_mod_material.rds")
+skink_visroll <- readRDS("output/skink_visroll_jags_mod_material.rds")
+
+# Examine model output
+# skink_visroll
+
+# Examine traceplots
+# jagsUI::traceplot(skink_visroll)
+
+```
+# Graphing detection probability of visual and "visual + roller eDNA"
+```{r}
+skink_visroll <- readRDS("output/skink_visroll_jags_mod_material.rds")
+skink_visual <- readRDS("output/skink_visual_jags_mod_material.rds")
+skink_vissoil <- 
+          readRDS("output/skink_vissoil_jags_mod_material.rds")
+
+
+skink_plot = data.frame(posterior = c(skink_visual$sims.list$p.fall.wood,
+                         skink_visual$sims.list$p.fall.metal,
+                         skink_visual$sims.list$p.spring.wood,
+                         skink_visual$sims.list$p.spring.metal,
+                         skink_visroll$sims.list$p.fall.wood,
+                         skink_visroll$sims.list$p.fall.metal,
+                         skink_visroll$sims.list$p.spring.wood,
+                         skink_visroll$sims.list$p.spring.metal,
+                         skink_vissoil$sims.list$p.fall,
+                         skink_vissoil$sims.list$p.spring
+                         ),
+           Season = c(rep("Fall 2020", 90000), rep("Spring 2021", 90000),
+                      rep("Fall 2020", 90000), rep("Spring 2021", 90000),
+                      rep("Fall 2020", 45000), rep("Spring 2021", 45000)),
+           Method = c(rep("Visual only", 180000), 
+                      rep("Visual + \nroller eDNA", 180000),
+                      rep("Visual + \nsoil eDNA", 90000)),
+           Material = c(rep(c(rep("Wood", 45000), rep("Metal", 45000)), 4),
+                        rep("Both", 90000)),
+           order = c(rep(1, 180000), rep(2, 180000), rep(3, 90000)),
+           order2 = c(rep(c(rep(1, 45000), rep(2, 45000)), 4),
+                        rep(3, 90000))
+             )
+
+# summarize posteriors for plotting medians and 95% CI
+skink_post_sum = aggregate(
+  skink_plot$posterior,
+  list(
+    skink_plot$Season,
+    skink_plot$Method,
+    skink_plot$Material,
+    skink_plot$order
+  ),
+  median
+) %>%
+  bind_cols(ll = aggregate(
+    skink_plot$posterior,
+    list(
+      skink_plot$Season,
+      skink_plot$Method,
+      skink_plot$Material,
+      skink_plot$order
+    ),
+    FUN = 'quantile',
+    probs = c(0.025)
+  )$x) %>%
+  bind_cols(ul = aggregate(
+    skink_plot$posterior,
+    list(
+      skink_plot$Season,
+      skink_plot$Method,
+      skink_plot$Material,
+      skink_plot$order
+    ),
+    FUN = 'quantile',
+    probs = c(0.975)
+  )$x) %>%
+  bind_cols(ll10 = aggregate(
+    skink_plot$posterior,
+    list(
+      skink_plot$Season,
+      skink_plot$Method,
+      skink_plot$Material,
+      skink_plot$order
+    ),
+    FUN = 'quantile',
+    probs = c(0.1)
+  )$x) %>%
+  bind_cols(ul90 = aggregate(
+    skink_plot$posterior,
+    list(
+      skink_plot$Season,
+      skink_plot$Method,
+      skink_plot$Material,
+      skink_plot$order
+    ),
+    FUN = 'quantile',
+    probs = c(0.9)
+  )$x) %>%
+  rename(
+    Season = Group.1,
+    Method = Group.2,
+    Material = Group.3,
+    order = Group.4,
+    med = x
+  ) %>%
+  mutate(offset = case_when(Material == "Metal" | Material == "Both" ~ -0.1,
+                            TRUE ~ -0.2)) %>%
+  filter(Material != "Both")
+
+skink_plot %>%
+  filter(Material != "Both") %>%
+  ggplot() +
+  ggridges::stat_density_ridges(aes(x = posterior, 
+                                     y = forcats::fct_reorder(Method, 
+                                                              order, 
+                                                              .desc = T), 
+                                     fill = Material),
+                                     quantiles = 2,
+                                alpha = 0.75, scale = 1.25) +
+
+  geom_errorbar(data= skink_post_sum, aes(xmin = ll, xmax = ul, 
+                                          y = 3-order+offset,
+                             color = Material), width = 0, size = 0.5) +
+  geom_errorbar(data= skink_post_sum, aes(xmin = ll10, xmax = ul90, 
+                                          y = 3-order+offset,
+                             color = Material), width = 0, size = 1) +
+  geom_point(data= skink_post_sum, aes(x = med, y = 3-order+offset,
+                             color = Material), size = 3) +  
+  scale_fill_manual(values = c("white", "darkgray")) +
+  scale_color_manual(values = c("black", "darkgray")) +
+  scale_x_continuous(limits = c(0,1)) +
+  facet_wrap(~Season) +
+  theme_bw() +
+  # ggridges::theme_ridges() +
+  theme(text = element_text(size = 14),
+        axis.text.y = element_text(size = 15),
+        strip.text = element_text(size = 14, vjust=0.5), # vjust=0.9 theme_ridges
+        strip.background = element_rect(fill = "transparent",
+                                        color = NA),
+        axis.title.x = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent", color = NA)) +
+  labs(x = "Visit-level detection probability", y = "") +
+  coord_cartesian(clip = "off") +
+  scale_y_discrete(expand = expand_scale(add = c(.5, 1.5)))
+
+ ggsave("figures/skink_visroll_vissoil_detection_probability11_bw.pdf",
+        dpi = 600, width = 9, height = 4)
+```
+# SAME BUT IN COLOR - Graphing detection probability of visual and "visual + roller eDNA"
+```{r}
+skink_visroll <- readRDS("output/skink_visroll_jags_mod_material.rds")
+skink_visual <- readRDS("output/skink_visual_jags_mod_material.rds")
+skink_vissoil <- 
+          readRDS("output/skink_vissoil_jags_mod_material.rds")
+
+
+skink_plot = data.frame(posterior = c(skink_visual$sims.list$p.fall.wood,
+                         skink_visual$sims.list$p.fall.metal,
+                         skink_visual$sims.list$p.spring.wood,
+                         skink_visual$sims.list$p.spring.metal,
+                         skink_visroll$sims.list$p.fall.wood,
+                         skink_visroll$sims.list$p.fall.metal,
+                         skink_visroll$sims.list$p.spring.wood,
+                         skink_visroll$sims.list$p.spring.metal,
+                         skink_vissoil$sims.list$p.fall,
+                         skink_vissoil$sims.list$p.spring
+                         ),
+           Season = c(rep("Fall 2020", 90000), rep("Spring 2021", 90000),
+                      rep("Fall 2020", 90000), rep("Spring 2021", 90000),
+                      rep("Fall 2020", 45000), rep("Spring 2021", 45000)),
+           Method = c(rep("Visual only", 180000), 
+                      rep("Visual + \nroller eDNA", 180000),
+                      rep("Visual + \nsoil eDNA", 90000)),
+           Material = c(rep(c(rep("Wood", 45000), rep("Metal", 45000)), 4),
+                        rep("Both", 90000)),
+           order = c(rep(1, 180000), rep(2, 180000), rep(3, 90000)),
+           order2 = c(rep(c(rep(1, 45000), rep(2, 45000)), 4),
+                        rep(3, 90000))
+             )
+
+# summarize posteriors for plotting medians and 95% CI
+skink_post_sum = aggregate(
+  skink_plot$posterior,
+  list(
+    skink_plot$Season,
+    skink_plot$Method,
+    skink_plot$Material,
+    skink_plot$order
+  ),
+  median
+) %>%
+  bind_cols(ll = aggregate(
+    skink_plot$posterior,
+    list(
+      skink_plot$Season,
+      skink_plot$Method,
+      skink_plot$Material,
+      skink_plot$order
+    ),
+    FUN = 'quantile',
+    probs = c(0.025)
+  )$x) %>%
+  bind_cols(ul = aggregate(
+    skink_plot$posterior,
+    list(
+      skink_plot$Season,
+      skink_plot$Method,
+      skink_plot$Material,
+      skink_plot$order
+    ),
+    FUN = 'quantile',
+    probs = c(0.975)
+  )$x) %>%
+  bind_cols(ll10 = aggregate(
+    skink_plot$posterior,
+    list(
+      skink_plot$Season,
+      skink_plot$Method,
+      skink_plot$Material,
+      skink_plot$order
+    ),
+    FUN = 'quantile',
+    probs = c(0.1)
+  )$x) %>%
+  bind_cols(ul90 = aggregate(
+    skink_plot$posterior,
+    list(
+      skink_plot$Season,
+      skink_plot$Method,
+      skink_plot$Material,
+      skink_plot$order
+    ),
+    FUN = 'quantile',
+    probs = c(0.9)
+  )$x) %>%
+  rename(
+    Season = Group.1,
+    Method = Group.2,
+    Material = Group.3,
+    order = Group.4,
+    med = x
+  ) %>%
+  mutate(offset = case_when(Material == "Metal" | Material == "Both" ~ -0.1,
+                            TRUE ~ -0.2)) %>%
+  filter(Material != "Both")
+
+skink_plot %>%
+  filter(Material != "Both") %>%
+  ggplot() +
+  ggridges::stat_density_ridges(aes(x = posterior, 
+                                     y = forcats::fct_reorder(Method, 
+                                                              order, 
+                                                              .desc = T), 
+                                     fill = Material),
+                                     quantiles = 2,
+                                alpha = 0.5, scale = 1.25) +
+
+  geom_errorbar(data= skink_post_sum, aes(xmin = ll, xmax = ul, 
+                                          y = 3-order+offset,
+                             color = Material), width = 0, size = 0.5) +
+  geom_errorbar(data= skink_post_sum, aes(xmin = ll10, xmax = ul90, 
+                                          y = 3-order+offset,
+                             color = Material), width = 0, size = 1) +
+  geom_point(data= skink_post_sum, aes(x = med, y = 3-order+offset,
+                             color = Material), size = 3) +  
+  scale_fill_manual(values = c("steelblue", "darkgreen")) +
+  scale_color_manual(values = c("steelblue", "darkgreen")) +
+  scale_x_continuous(limits = c(0,1)) +
+  facet_wrap(~Season) +
+  theme_bw() +
+  # ggridges::theme_ridges() +
+  theme(text = element_text(size = 14),
+        axis.text.y = element_text(size = 15),
+        strip.text = element_text(size = 14, vjust=0.5), # vjust=0.9 theme_ridges
+        strip.background = element_rect(fill = "transparent",
+                                        color = NA),
+        axis.title.x = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent", color = NA)) +
+  labs(x = "Visit-level detection probability", y = "") +
+  coord_cartesian(clip = "off") +
+  scale_y_discrete(expand = expand_scale(add = c(.5, 1.5)))
+
+# ggsave("figures/Fig4_skink_visroll_vissoil_detection_probability11_col.pdf",
+#         dpi = 600, width = 9, height = 4)
+```
+# Posterior summary statistics for visual-only and visual plus roller eDNA
+```{r}
+# view point estimates and 95% CI
+skink_post_sum %>%
+  select(1:7)
+
+# save table as HTML files
+skink_post_sum %>%
+  select(1:7) %>%
+  mutate(med = med*100,
+         ll = ll*100,
+         ul = ul*100) %>%
+knitr::kable(., digits = 1)  #%>%
+#  cat(., file = "table2.html")
+
+# eDNA point estimates / visual point estimates
+skink_post_sum[1:4,]$Season
+# "Fall 2020"   "Spring 2021" "Fall 2020"   "Spring 2021"
+skink_post_sum[1:4,]$Material
+# "Metal" "Metal" "Wood"  "Wood" 
+skink_post_sum[5:8,5] / skink_post_sum[1:4,5]
+# 8.681413  3.586737 15.790250  6.708695
+```
+
+
+# Plot cumulative detection probability vs. number of board visits
+```{r}
+skink_visroll <- readRDS("output/skink_visroll_jags_mod_material.rds")
+skink_visual <- readRDS("output/skink_visual_jags_mod_material.rds")
+
+# Format data and create figure
+# first load the sum_posts function 
+sum_posts = function(x, method = NULL, round = NULL){
+  sum_posts_list = aggregate(x, by = list(rep("A", nrow(x))), FUN = function(x) quantile(x, c(0.025, 0.10, 0.5, 0.90, 0.975))) %>%
+  select(-Group.1) %>%
+  c()
+
+sum_posts_df = do.call("rbind", sum_posts_list) %>% 
+  as.data.frame() %>%
+  rename(q2.5 = 1, q10 = 2, q50 = 3, q90 = 4, q97.5 = 5) %>%
+  mutate(n = 1:length(sum_posts_list),
+         Method = method,
+         Round = round)
+
+return(sum_posts_df)
+}
+
+cplot_all <- rbind.data.frame(
+sum_posts(skink_visroll$sims.list$p_board_n_fall, "Visual + \nroller eDNA"),
+sum_posts(skink_visual$sims.list$p_board_n_fall, "Visual only"),
+sum_posts(skink_visroll$sims.list$p_board_n_spring, "Visual + \nroller eDNA"),
+sum_posts(skink_visual$sims.list$p_board_n_spring, "Visual only")
+) %>%
+  mutate(season = c(c(rep("Fall 2020", 40), rep("Spring 2021", 40)))
+         )
+
+cplot_all %>%
+  filter(n < 13) %>%
+  ggplot() +
+  geom_abline(slope = 0, intercept = 0.95, color = "darkgray", size=1, linetype = 2) +
+  geom_ribbon(aes(x = n, ymin = q2.5, ymax = q97.5, fill = Method),
+              alpha = 0.5, color = "transparent") +
+  # geom_errorbar(aes(x = n, ymin = q2.5, ymax = q97.5, color = Method),
+  #             width = 0, size = 0.5) +  
+  # geom_errorbar(aes(x = n, ymin = q10, ymax = q90, color = Method),
+  #             width = 0, size = 1) +
+  scale_fill_manual(values = c("darkgray", "darkgray")) +
+  geom_line(aes(x = n, y = q50, color = Method), size = 1) +
+  geom_point(aes(x = n, y = q50, color = Method, 
+                 shape = Method), size = 2,
+             fill = "white") +
+  scale_shape_manual(values = c(16,21)) +
+  scale_color_manual(values = c("black", "black")) +
+  facet_wrap(~season) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)) +
+  labs(y = "Probability of \u2265 1 detection", 
+       x = "Number of visits to board") +
+  theme(strip.text = element_text(
+    size = 14,
+    colour = "black",
+    angle = 0
+    ), 
+    strip.background = element_rect(fill = "transparent",
+                                        color = NA)) +
+  # theme(legend.position = "") +
+  scale_x_continuous(breaks = c(5,10,15,20,25,30))
+
+# ggsave("figures/Fig5_skink_cumulative_detection12_bw.pdf", width = 9, height = 4, dpi = 600, device=cairo_pdf)
+```
+
+# SAME BUT IN COLOR - Plot cumulative detection probability vs. number of board visits
+```{r}
+skink_visroll <- readRDS("output/skink_visroll_jags_mod_material.rds")
+skink_visual <- readRDS("output/skink_visual_jags_mod_material.rds")
+
+# Format data and create figure
+# first load the sum_posts function 
+sum_posts = function(x, method = NULL, round = NULL){
+  sum_posts_list = aggregate(x, by = list(rep("A", nrow(x))), FUN = function(x) quantile(x, c(0.025, 0.10, 0.5, 0.90, 0.975))) %>%
+  select(-Group.1) %>%
+  c()
+
+sum_posts_df = do.call("rbind", sum_posts_list) %>% 
+  as.data.frame() %>%
+  rename(q2.5 = 1, q10 = 2, q50 = 3, q90 = 4, q97.5 = 5) %>%
+  mutate(n = 1:length(sum_posts_list),
+         Method = method,
+         Round = round)
+
+return(sum_posts_df)
+}
+
+cplot_all <- rbind.data.frame(
+sum_posts(skink_visroll$sims.list$p_board_n_fall, "Visual + \nroller eDNA"),
+sum_posts(skink_visual$sims.list$p_board_n_fall, "Visual only"),
+sum_posts(skink_visroll$sims.list$p_board_n_spring, "Visual + \nroller eDNA"),
+sum_posts(skink_visual$sims.list$p_board_n_spring, "Visual only")
+) %>%
+  mutate(season = c(c(rep("Fall 2020", 40), rep("Spring 2021", 40)))
+         )
+
+cplot_all %>%
+  filter(n < 13) %>%
+  ggplot() +
+  geom_abline(slope = 0, intercept = 0.95, color = "darkgray", size=1, linetype = 2) +
+  geom_ribbon(aes(x = n, ymin = q2.5, ymax = q97.5, fill = Method),
+              alpha = 0.5, color = "transparent") +
+  # geom_errorbar(aes(x = n, ymin = q2.5, ymax = q97.5, color = Method),
+  #             width = 0, size = 0.5) +  
+  # geom_errorbar(aes(x = n, ymin = q10, ymax = q90, color = Method),
+  #             width = 0, size = 1) +
+  scale_fill_manual(values = c("darkblue", "darkgray")) +
+  geom_line(aes(x = n, y = q50, color = Method), size = 1) +
+  geom_point(aes(x = n, y = q50, color = Method, 
+                 shape = Method), size = 2,
+             shape = 16) +
+  scale_color_manual(values = c("darkblue", "black")) +
+  facet_wrap(~season) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 15),
+        axis.title = element_text(size = 15),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)) +
+  labs(y = "Probability of \u2265 1 detection", 
+       x = "Number of visits to board") +
+  theme(strip.text = element_text(
+    size = 14,
+    colour = "black",
+    angle = 0
+    ), 
+    strip.background = element_rect(fill = "transparent",
+                                        color = NA)) +
+  # theme(legend.position = "") +
+  scale_x_continuous(breaks = c(5,10,15,20,25,30))
+
+# ggsave("figures/Fig4_skink_cumulative_detection12_col.pdf", width = 9, height = 4, dpi = 600, device=cairo_pdf)
+
+# ggsave("figures/Fig4_skink_cumulative_detection12_col.png", width = 9, height = 4, dpi = 600)
+```
+
