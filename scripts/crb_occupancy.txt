@@ -1,0 +1,52 @@
+
+model {
+
+# Priors
+mean.psi ~ dunif(0, 1)        # Occupancy intercept on prob. scale
+gamma0 <- logit(mean.psi)      #   same on logit scale
+# gamma.mdens ~ dnorm(0, 0.1)   # Covariates on logit(occupancy)
+gamma.hdens ~ dnorm(0, 0.1)   # Covariates on logit(occupancy)
+
+mean.p ~ dunif(0, 1)          # Detection intercept on prob. scale
+alpha0 <- logit(mean.p)       #   same on logit scale
+# alpha.mdens ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+alpha.hdens ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+
+# Likelihood
+for (i in 1:n.sites) {
+  z[i] ~ dbern(psi[i])
+  logit(psi[i]) <- gamma0 + #gamma.mdens * mdens[i,1,1] +
+                   gamma.hdens * hdens[i,1,1]
+   for (j in 1:n.trees) {
+      y[i,j] ~ dbern(z[i] * p[i,j])
+      logit(p[i,j]) <- alpha0 + #alpha.mdens * mdens[i,j,1] +
+                       alpha.hdens * hdens[i,j,1]
+   }
+}
+
+# Derived quantities
+# site-level occupancy for different densities
+logit(psi.low) <- gamma0
+# logit(psi.med) <- gamma0 + gamma.mdens
+logit(psi.high) <- gamma0 + gamma.hdens
+
+# detection probability
+logit(p.low) <- alpha0
+# logit(p.med) <- alpha0 + alpha.mdens
+logit(p.high) <- alpha0 + alpha.hdens
+
+# Cumulative board-level detection probability for 1-37 trees/site
+for(i in 1:150){
+p_tree_n_low[i] <- (1 - (1 - p.low)^i)
+# p_tree_n_med[i] <- (1 - (1 - p.med)^i)
+p_tree_n_high[i] <- (1 - (1 - p.high)^i)
+}
+
+# trees/site required to reach 95% certainty of detecting skinks within occupied areas
+n_low <- log(20) / (-log(1 - p.low))
+# n_med <- log(20) / (-log(1 - p.med))
+n_high <- log(20) / (-log(1 - p.high))
+
+}
+
+
