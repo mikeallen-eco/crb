@@ -6,6 +6,7 @@ library(ggplot2)
 
 cr <- read_xlsx("data/CRB eDNA results.xlsx", sheet = "Roller")
 cm <- read_xlsx("data/CRB eDNA results.xlsx", sheet = "Mulch")
+cr22 <- read_xlsx("data/CRB eDNA results 2022.xlsx", sheet = "Roller")
 
 # Format roller matrix
 roll.matrix <- apply(cr[,2:ncol(cr)], 2, as.numeric)
@@ -16,6 +17,16 @@ roll.matrix[roll.matrix>0] <- 1
 mulch.matrix <- apply(cm[,2:ncol(cm)], 2, as.numeric)
 mulch.matrix.hits <- mulch.matrix
 mulch.matrix[mulch.matrix>0] <- 1
+
+# Format both matrix
+both.matrix.hits <- cbind(roll.matrix.hits, mulch.matrix.hits)
+
+# Format roller matrix including 2022
+roll.matrix22 <- matrix(nrow = 18, ncol = 37)
+roll.matrix22[1:16,] <- apply(cr[,2:ncol(cr)], 2, as.numeric)
+roll.matrix22[17:18,1:10] <- apply(cr22[,2:ncol(cr22)], 2, as.numeric)
+roll.matrix22.hits <- roll.matrix22
+roll.matrix22[roll.matrix22>0] <- 1
 
 # Format 'trap plus roller eDNA' occupancy model
 # traproll.array <- simplify2array(list(trap.matrix, eDNA.matrix))
@@ -34,6 +45,7 @@ make_pcr <- function(x){
   }
 }
 
+### make a roller detection/non-detection array
 tlist <- list()
 # apply the function to each tree column
 for(i in 1:37) {
@@ -55,7 +67,49 @@ z.roll = apply(y.roll, 1, max, na.rm = T)
 # z.trap = apply(trap.matrix, 1, max, na.rm = T)
 # z.both = apply(cbind(z.roll, z.trap), 1, max)
 
-# Create array for the covariate "medium density" (1 or 0) for detection
+### make a roller detection/non-detection array (including 2022 data)
+tlist <- list()
+# apply the function to each tree column
+for(i in 1:37) {
+tlist[[i]] <- sapply(roll.matrix22.hits[,i], FUN = make_pcr) %>% t()
+}
+
+# create array of PCR detections
+y.roll22 <- array(dim = c(18, 37, 3))
+for(i in 1:3){
+y.roll22[,,i] <- lapply(1:37, FUN = function(x) do.call(c, tlist[[x]][,i])) %>%
+  do.call(rbind, .) %>% 
+  t()
+}
+
+y.roll22.mat <- apply(y.roll22, c(1,2), max, na.rm = T)
+y.roll22.mat[is.infinite(y.roll22.mat)] <- NA
+
+z.roll22 = apply(y.roll22, 1, max, na.rm = T)
+# z.trap = apply(trap.matrix, 1, max, na.rm = T)
+# z.both = apply(cbind(z.roll, z.trap), 1, max)
+
+### make a "both" detection/non-detection array (roller and mulch)
+tlist <- list()
+# apply the function to each tree column
+for(i in 1:ncol(both.matrix.hits)) {
+tlist[[i]] <- sapply(both.matrix.hits[,i], FUN = make_pcr) %>% t()
+}
+
+# create array of PCR detections
+y.both <- array(dim = c(16, ncol(both.matrix.hits), 3))
+for(i in 1:3){
+y.both[,,i] <- lapply(1:ncol(both.matrix.hits), FUN = function(x) do.call(c, tlist[[x]][,i])) %>%
+  do.call(rbind, .) %>% 
+  t()
+}
+
+y.both.mat <- apply(y.both, c(1,2), max, na.rm = T)
+y.both.mat[is.infinite(y.both.mat)] <- NA
+
+z.both = apply(y.both, 1, max, na.rm = T)
+
+# Create array for the covariate "medium density" (1 or 0) for detection (roller only)
 mdens.roll.mat <- matrix(c(rep(0, 37*7), 
                  rep(0, 37*4),
                  rep(1, 37*3),
@@ -63,7 +117,15 @@ mdens.roll.mat <- matrix(c(rep(0, 37*7),
                  rep(0, 37*1)), ncol = 37, byrow = T)
 mdens.roll.array <- simplify2array(list(mdens.roll.mat, mdens.roll.mat, mdens.roll.mat))
 
-# Create array for the covariate "high density" (1 or 0) for detection
+# Create array for the covariate "medium density" (1 or 0) for detection (both roller & mulch)
+mdens.both.mat <- matrix(c(rep(0, 69*7), 
+                 rep(0, 69*4),
+                 rep(1, 69*3),
+                 rep(0, 69*1),
+                 rep(0, 69*1)), ncol = 69, byrow = T)
+mdens.both.array <- simplify2array(list(mdens.both.mat, mdens.both.mat, mdens.both.mat))
+
+# Create array for the covariate "high density" (1 or 0) for detection (roller only)
 hdens.roll.mat <- matrix(c(rep(0, 37*7), 
                  rep(0, 37*4),
                  rep(0, 37*3),
@@ -71,8 +133,27 @@ hdens.roll.mat <- matrix(c(rep(0, 37*7),
                  rep(0, 37*1)), ncol = 37, byrow = T)
 hdens.roll.array <- simplify2array(list(hdens.roll.mat, hdens.roll.mat, hdens.roll.mat))
 
-# Create array for the covariate "high/med density" (1 or 0) for detection
+# Create array for the covariate "high density" (1 or 0) for detection (both roller & mulch)
+hdens.both.mat <- matrix(c(rep(0, 69*7), 
+                 rep(0, 69*4),
+                 rep(0, 69*3),
+                 rep(1, 69*1),
+                 rep(0, 69*1)), ncol = 69, byrow = T)
+hdens.both.array <- simplify2array(list(hdens.both.mat, hdens.both.mat, hdens.both.mat))
+
+# Create array for the covariate "high/med density" (1 or 0) for detection (roller only)
 hmdens.roll.array <- mdens.roll.array + hdens.roll.array
+
+# Create array for the covariate "high/med density" (1 or 0) for detection (roller & mulch)
+hmdens.both.array <- mdens.both.array + hdens.both.array
+
+# Create array for the covariate "roller vs. mulch" (roller & mulch)
+roller.mulch <- matrix(nrow = 16, ncol = 69)
+for(i in 1:16){
+roller.mulch[i,] <- c(rep(1, 37), rep(0, 32))
+}
+roller.mulch.array <- simplify2array(list(roller.mulch, roller.mulch, roller.mulch))
+
 
 # Bundle and summarize data set
 jags.data.roll <- list(
@@ -85,6 +166,32 @@ jags.data.roll <- list(
   mdens = mdens.roll.array,
   hdens = hdens.roll.array,
   hmdens = hmdens.roll.array
+)
+
+# Bundle and summarize data set
+jags.data.roll.qPCR <- list(
+  y = y.roll,
+  z = rep(1,16), #ifelse(z.roll > 0, 1, NA),
+  n.sites = nrow(y.roll),
+  n.trees = ncol(y.roll),
+  n.PCRrep = dim(y.roll)[3],
+  d = hdens.roll.array+1,
+  mdens = mdens.roll.array,
+  hdens = hdens.roll.array,
+  hmdens = hmdens.roll.array
+)
+
+# Bundle and summarize data set for "roller & mulch qPCR level"
+jags.data.both.qPCR <- list(
+  y = y.both,
+  z = ifelse(z.both > 0, 1, NA),
+  n.sites = nrow(y.both),
+  n.trees = ncol(y.both),
+  n.PCRrep = dim(y.both)[3],
+  mdens = mdens.both.array,
+  hdens = hdens.both.array,
+  hmdens = hmdens.both.array,
+  roller.mulch = roller.mulch.array
 )
 
 
@@ -423,3 +530,429 @@ cplot_all %>%
 # ggsave("figures/crb_cumulative_eDNA_detection.jpg", width = 6, height = 4, dpi = 600)
 ```
 
+
+
+# Define Bayesian qPCR-replicate-based multilevel occ. mod. in JAGS
+# version with low vs. high/medium density and roller vs. mulch
+JAGS code modified from Kéry & Royle (2015, pp. 606-607).
+model from Dorazio & Erickson 2018
+
+Kéry, M., & Royle, J. A. (2015). Applied Hierarchical Modeling in Ecology: Analysis of distribution, abundance and species richness in R and BUGS: Volume 1: Prelude and Static Models. London: Academic Press. 
+```{r}
+sink("scripts/crb_rollermulch_eDNA_multilevel.txt")
+cat("
+model {
+
+# Priors and model for params
+int.psi ~ dunif(0,1)         # Intercept of occupancy probability
+gamma0 <- logit(int.psi)       # same on logit scale
+gamma.hmdens ~ dnorm(0, 0.1)   # season covariate on logit(site-level occupancy)
+
+int.theta ~ dunif(0,1)       # Intercept plot-level occupancy probability
+beta0 <- logit(int.theta)      # same on logit scale
+beta.hmdens ~ dnorm(0, 0.1)   # covariate on logit(tree-level occupancy)
+beta.roller.mulch ~ dnorm(0, 0.1) # covariate on logit(tree/sample-level occupancy)
+
+int.p ~ dunif(0,1)           # Intercept detection probability
+alpha0 <- logit(int.p)         # same on logit scale
+alpha.hmdens ~ dnorm(0, 0.1)   # covariate on logit(detection given DNA capture)
+alpha.roller.mulch ~ dnorm(0, 0.1) # covariate on logit(detection given DNA capture)
+
+# Likelihood
+for (i in 1:n.sites){
+   # Occurrence at board i
+   z[i] ~ dbern(psi[i])
+   logit(psi[i]) <- gamma0 + gamma.hmdens * hmdens[i,1,1]
+   for (j in 1:n.trees){
+      # eDNA capture probability (availability) in visit j
+      a[i,j] ~ dbern(z[i] * theta[i,j])
+       logit(theta[i,j]) <- beta0 + beta.hmdens * hmdens[i,j,1] +
+                            beta.roller.mulch * roller.mulch[i,j,1]
+      for (k in 1:n.PCRrep){
+         # detection process for PCR replicate k
+         y[i,j,k] ~ dbern(a[i,j] * p[i,j,k])
+         logit(p[i,j,k]) <- alpha0 + alpha.hmdens * hmdens[i,j,k] +
+                            alpha.roller.mulch * roller.mulch[i,j,k]
+      }
+   }
+ }
+
+# Derived quantities
+# site-level occupancy by density
+logit(psi.low) <- gamma0
+logit(psi.high) <- gamma0 + gamma.hmdens
+
+# Theta or eDNA capture probability
+logit(theta.low.roll) <- beta0 + beta.roller.mulch
+logit(theta.low.mulch) <- beta0
+logit(theta.high.roll) <- beta0 + beta.hmdens + beta.roller.mulch
+logit(theta.high.mulch) <- beta0 + beta.hmdens
+
+# Detection probabity for an individual qPCR replicate
+logit(p.low.roll) <- alpha0 + alpha.roller.mulch
+logit(p.low.mulch) <- alpha0
+logit(p.high.roll) <- alpha0 + alpha.hmdens + alpha.roller.mulch
+logit(p.high.mulch) <- alpha0 + alpha.hmdens
+
+# Equation for 'at least one hit' given presence in sample
+for(i in 1:6){
+p.eDNA_low.roll[i] <- (1-(1-p.low.roll)^i)
+p.eDNA_low.mulch[i] <- (1-(1-p.low.mulch)^i)
+p.eDNA_high.roll[i] <- (1-(1-p.high.roll)^i)
+p.eDNA_high.mulch[i] <- (1-(1-p.high.mulch)^i)
+}
+
+# Equation for total detection = capture x probability of 'at least one hit'
+for(i in 1:6){
+p.eDNA_detect.low.roll[i] <- theta.low.roll * (1-(1-p.low.roll)^i)
+p.eDNA_detect.low.mulch[i] <- theta.low.mulch * (1-(1-p.low.mulch)^i)
+p.eDNA_detect.high.roll[i] <- theta.high.roll * (1-(1-p.high.roll)^i)
+p.eDNA_detect.high.mulch[i] <- theta.high.mulch * (1-(1-p.high.mulch)^i)
+}
+
+
+}
+",fill=TRUE)
+sink()
+```
+# Run Bayesian qPCR-replicate-based multilevel occupancy model in JAGS
+model from Dorazio & Errickson 2018 (code from Kery & Royle 2015)
+```{r}
+# Initial values
+inits <- function() list(a = apply(y.both, c(1,2), max), 
+                         # inits for availability (a)
+                         # z = ifelse(z.both>1,as.numeric(1),as.numeric(NA)), # inits for presence (z)
+                         int.psi = runif(1), 
+                         int.theta = runif(1),
+                         int.p = runif(1), 
+                         gamma.hmdens = rnorm(1, 0, 1),
+                         beta.hmdens = rnorm(1, 0, 1),
+                         alpha.hmdens = rnorm(1,0, 1),
+                         gamma.roller.mulch = rnorm(1, 0, 1),
+                         beta.roller.mulch = rnorm(1, 0, 1),
+                         alpha.roller.mulch = rnorm(1,0, 1))
+
+# Parameters monitored
+params <- c("gamma0", "gamma.hmdens", 
+            "beta0", "beta.hmdens", "beta.roller.mulch",
+            "alpha0", "alpha.hmdens", "alpha.roller.mulch",
+            "psi.low", "psi.high",
+            "theta.low.roll", "theta.low.mulch", 
+            "theta.high.roll", "theta.high.mulch", 
+            "p.low.roll", "p.low.mulch", 
+            "p.high.roll", "p.high.mulch", 
+            "p.eDNA_detect.low.roll", "p.eDNA_detect.low.mulch",
+            "p.eDNA_detect.high.roll", "p.eDNA_detect.high.mulch",
+            "p.eDNA_low.roll", "p.eDNA_low.mulch",
+            "p.eDNA_high.roll", "p.eDNA_high.mulch")
+
+#####################################
+#### Run jags model
+#####################################
+crb_eDNApcr <- jagsUI::jags(data = jags.data.both.qPCR,
+                         inits = inits,
+                         parameters.to.save = params,
+                         model.file = "scripts/crb_rollermulch_eDNA_multilevel.txt",
+                         n.chains = 3,
+                         n.adapt = NULL,
+                         n.burnin = 20000,
+                         n.iter = 120000, 
+                         n.thin = 10,
+                         parallel = T,
+                         verbose = TRUE,
+                         modules = NULL)
+
+# Examine model output
+crb_eDNApcr
+# saveRDS(skink_eDNA, "output/skink_visroll_jags_mod_materials.rds")
+skink_eDNA <- readRDS("output/skink_eDNA_jags_mod_materials.rds")
+
+
+# Examine traceplots
+# jagsUI::traceplot(skink_eDNA)
+```
+# summarizing posteriors for multilevel roller eDNA JAGS model
+qPCR-relplicate detection probability model (Dorazio & Erickson, 2018)
+```{r}
+# load the multilevel roller eDNA JAGS model
+skink_eDNA <- readRDS("output/skink_eDNA_jags_mod_materials.rds")
+
+# 1 tech rep
+med_eDNA1 <- t(data.frame(skink_eDNA$q50))[26:29,1]
+ll_eDNA1 <- t(data.frame(skink_eDNA$q2.5))[26:29,1]
+ul_eDNA1 <- t(data.frame(skink_eDNA$q97.5))[26:29,1]
+eDNA_preds1 <- cbind(med_eDNA1, ll_eDNA1, ul_eDNA1)*100
+
+# 2 tech reps
+med_eDNA2 <- t(data.frame(skink_eDNA$q50))[26:29,2]
+ll_eDNA2 <- t(data.frame(skink_eDNA$q2.5))[26:29,2]
+ul_eDNA2 <- t(data.frame(skink_eDNA$q97.5))[26:29,2]
+eDNA_preds2 <- cbind(med_eDNA2, ll_eDNA2, ul_eDNA2)*100
+
+# 3 tech reps
+med_eDNA3 <- t(data.frame(skink_eDNA$q50))[26:29,3]
+ll_eDNA3 <- t(data.frame(skink_eDNA$q2.5))[26:29,3]
+ul_eDNA3 <- t(data.frame(skink_eDNA$q97.5))[26:29,3]
+eDNA_preds3 <- cbind(med_eDNA3, ll_eDNA3, ul_eDNA3)*100
+
+# 4 tech reps
+med_eDNA4 <- t(data.frame(skink_eDNA$q50))[26:29,4]
+ll_eDNA4 <- t(data.frame(skink_eDNA$q2.5))[26:29,4]
+ul_eDNA4 <- t(data.frame(skink_eDNA$q97.5))[26:29,4]
+eDNA_preds4 <- cbind(med_eDNA4, ll_eDNA4, ul_eDNA4)*100
+
+# 5 tech reps
+med_eDNA5 <- t(data.frame(skink_eDNA$q50))[26:29,5]
+ll_eDNA5 <- t(data.frame(skink_eDNA$q2.5))[26:29,5]
+ul_eDNA5 <- t(data.frame(skink_eDNA$q97.5))[26:29,5]
+eDNA_preds5 <- cbind(med_eDNA5, ll_eDNA5, ul_eDNA5)*100
+
+# 6 tech reps
+med_eDNA6 <- t(data.frame(skink_eDNA$q50))[26:29,6]
+ll_eDNA6 <- t(data.frame(skink_eDNA$q2.5))[26:29,6]
+ul_eDNA6 <- t(data.frame(skink_eDNA$q97.5))[26:29,6]
+eDNA_preds6 <- cbind(med_eDNA6, ll_eDNA6, ul_eDNA6)*100
+
+cbind(eDNA_preds1, eDNA_preds2, eDNA_preds3, eDNA_preds4, eDNA_preds5, eDNA_preds6) %>%
+  t() %>%
+  as.data.frame() %>%
+  knitr::kable(format = "html", digits = 1) %>%
+  cat(., file = "tables/tableS3A.html")
+
+```
+
+
+
+# Define Bayesian qPCR-replicate-based multilevel occ. mod. in JAGS
+# version with low vs. high/medium density and ROLLER ONLY
+JAGS code modified from Kéry & Royle (2015, pp. 606-607).
+model from Dorazio & Erickson 2018
+
+Kéry, M., & Royle, J. A. (2015). Applied Hierarchical Modeling in Ecology: Analysis of distribution, abundance and species richness in R and BUGS: Volume 1: Prelude and Static Models. London: Academic Press. 
+```{r}
+sink("scripts/crb_roller_eDNA_multilevel.txt")
+cat("
+model {
+
+# Priors and model for params
+int.psi ~ dunif(0,1)         # Intercept of occupancy probability
+gamma0 <- logit(int.psi)       # same on logit scale
+gamma.hmdens ~ dnorm(0, 0.1)   # season covariate on logit(site-level occupancy)
+
+int.theta ~ dunif(0,1)       # Intercept plot-level occupancy probability
+beta0 <- logit(int.theta)      # same on logit scale
+beta.hmdens ~ dnorm(0, 0.1)   # covariate on logit(tree-level occupancy)
+# beta.roller.mulch ~ dnorm(0, 0.1) # covariate on logit(tree/sample-level occupancy)
+
+int.p ~ dunif(0,1)           # Intercept detection probability
+alpha0 <- logit(int.p)         # same on logit scale
+alpha.hmdens ~ dnorm(0, 0.1)   # covariate on logit(detection given DNA capture)
+# alpha.roller.mulch ~ dnorm(0, 0.1) # covariate on logit(detection given DNA capture)
+
+# Likelihood
+for (i in 1:n.sites){
+   # Occurrence at board i
+   z[i] ~ dbern(psi[i])
+   logit(psi[i]) <- gamma0 + gamma.hmdens * hmdens[i,1,1]
+   for (j in 1:n.trees){
+      # eDNA capture probability (availability) in visit j
+      a[i,j] ~ dbern(z[i] * theta[i,j])
+       logit(theta[i,j]) <- beta0 + beta.hmdens * hmdens[i,j,1]
+      for (k in 1:n.PCRrep){
+         # detection process for PCR replicate k
+         y[i,j,k] ~ dbern(a[i,j] * p[i,j,k])
+         logit(p[i,j,k]) <- alpha0 + alpha.hmdens * hmdens[i,j,k]
+      }
+   }
+ }
+
+# Derived quantities
+# site-level occupancy by density
+logit(psi.low) <- gamma0
+logit(psi.high) <- gamma0 + gamma.hmdens
+
+# Theta or eDNA capture probability
+logit(theta.low.roll) <- beta0
+logit(theta.high.roll) <- beta0 + beta.hmdens
+
+# Detection probabity for an individual qPCR replicate
+logit(p.low.roll) <- alpha0
+logit(p.high.roll) <- alpha0 + alpha.hmdens
+
+# Equation for 'at least one hit' given presence in sample
+for(i in 1:8){
+p.eDNA_low.roll[i] <- (1-(1-p.low.roll)^i)
+p.eDNA_high.roll[i] <- (1-(1-p.high.roll)^i)
+}
+
+# Equation for total detection = capture x probability of 'at least one hit' w/ 8 tech reps
+for(i in 1:30){
+p.eDNA_detect.low.roll[i] <- 1-(1-(theta.low.roll * (1-(1-p.low.roll)^8)))^i
+p.eDNA_detect.high.roll[i] <- 1-(1-(theta.high.roll * (1-(1-p.high.roll)^8)))^i
+}
+
+
+}
+",fill=TRUE)
+sink()
+```
+# Run Bayesian qPCR-replicate-based multilevel occupancy model in JAGS
+model from Dorazio & Errickson 2018 (code from Kery & Royle 2015)
+```{r}
+# Initial values
+inits <- function() list(a = apply(y.roll, c(1,2), max), 
+                         # inits for availability (a)
+                         # z = ifelse(z.both>1,as.numeric(1),as.numeric(NA)), # inits for presence (z)
+                         int.psi = runif(1), 
+                         int.theta = runif(1),
+                         int.p = runif(1), 
+                         gamma.hmdens = rnorm(1, 0, 1),
+                         beta.hmdens = rnorm(1, 0, 1),
+                         alpha.hmdens = rnorm(1,0, 1),
+                         gamma.roller.mulch = rnorm(1, 0, 1),
+                         beta.roller.mulch = rnorm(1, 0, 1),
+                         alpha.roller.mulch = rnorm(1,0, 1))
+
+# Parameters monitored
+params <- c("gamma0", "gamma.hmdens", 
+            "beta0", "beta.hmdens", "beta.roller.mulch",
+            "alpha0", "alpha.hmdens", "alpha.roller.mulch",
+            "psi.low", "psi.high",
+            "theta.low.roll", "theta.low.mulch", 
+            "theta.high.roll", "theta.high.mulch", 
+            "p.low.roll", "p.low.mulch", 
+            "p.high.roll", "p.high.mulch", 
+            "p.eDNA_detect.low.roll", "p.eDNA_detect.low.mulch",
+            "p.eDNA_detect.high.roll", "p.eDNA_detect.high.mulch",
+            "p.eDNA_low.roll", "p.eDNA_low.mulch",
+            "p.eDNA_high.roll", "p.eDNA_high.mulch")
+
+#####################################
+#### Run jags model
+#####################################
+crb_eDNA <- jagsUI::jags(data = jags.data.roll.qPCR,
+                         inits = inits,
+                         parameters.to.save = params,
+                         model.file = "scripts/crb_roller_eDNA_multilevel.txt",
+                         n.chains = 3,
+                         n.adapt = NULL,
+                         n.burnin = 20000,
+                         n.iter = 120000, 
+                         n.thin = 10,
+                         parallel = T,
+                         verbose = TRUE,
+                         modules = NULL)
+
+# Examine model output
+crb_eDNA
+# saveRDS(crb_eDNA, "output/crb_qPCR_roll_jags_mod_density.rds")
+crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_density.rds")
+
+
+# Examine traceplots
+# jagsUI::traceplot(skink_eDNA)
+```
+# summarizing posteriors for multilevel roller eDNA JAGS model
+qPCR-relplicate detection probability model (Dorazio & Erickson, 2018)
+```{r}
+# load the multilevel roller eDNA JAGS model
+# crb_eDNA <- readRDS("output/skink_eDNA_jags_mod_materials.rds")
+
+# tech reps (low dens)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_low.roll)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_low.roll)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_low.roll)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_low.roll, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_low.roll, 2, function(x) quantile(x, 0.1)))
+eDNA_preds <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds) <- c("med", "ll", "ul", "ll10", "ul90")
+
+# tech reps (high/med dens)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_high.roll)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_high.roll)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_high.roll)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll, 2, function(x) quantile(x, 0.1)))
+eDNA_preds2 <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds2) <- c("med", "ll", "ul", "ll10", "ul90")
+
+df <- eDNA_preds %>%
+  bind_rows(eDNA_preds2) %>%
+  mutate(techreps = c(1:8,1:8),
+         dens = c(rep("Low density", 8), rep("High density", 8)))
+
+(techreps_plot <- df %>%
+  ggplot() +
+  geom_errorbar(aes(x = techreps, ymin = ll, ymax = ul, color = dens),
+                position = position_dodge(width = 1),
+                width = 0) +
+  geom_errorbar(aes(x = techreps, ymin = ll10, ymax = ul90, color = dens),
+                position = position_dodge(width = 1),
+                width = 0, linewidth = 1) +
+  geom_point(aes(x = techreps, y = med, color = dens),
+                position = position_dodge(width = 1),
+             size = 3) +
+  scale_color_manual(values = c("olivedrab", "steelblue")) +
+  labs(x = "Technical replicates",
+       y = "Detection prob. given eDNA capture\nwithin sample",
+       color = "") +
+  theme_bw() +
+    guides(color = "none")
+)
+
+# num samples at 8 tech reps (low dens)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_detect.low.roll)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_detect.low.roll)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_detect.low.roll)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_detect.low.roll, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_detect.low.roll, 2, function(x) quantile(x, 0.1)))
+eDNA_preds <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds) <- c("med", "ll", "ul", "ll10", "ul90")
+
+# tech reps (high/med dens)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_detect.high.roll)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_detect.high.roll)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_detect.high.roll)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_detect.high.roll, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_detect.high.roll, 2, function(x) quantile(x, 0.1)))
+eDNA_preds2 <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds2) <- c("med", "ll", "ul", "ll10", "ul90")
+
+df_samps <- eDNA_preds %>%
+  bind_rows(eDNA_preds2) %>%
+  mutate(numsamps = c(1:100,1:100),
+         dens = c(rep("Low density", 100), rep("High/med. density", 100)))
+
+(samps_plot <- df_samps %>%
+  ggplot() +
+  geom_ribbon(aes(x = numsamps, ymin = ll, ymax = ul, fill = dens),
+                position = position_dodge(width = 1),
+              alpha = 0.5) +
+  geom_ribbon(aes(x = numsamps, ymin = ll10, ymax = ul90, fill = dens),
+                position = position_dodge(width = 1),
+              alpha = 0.5) +
+  geom_line(aes(x = numsamps, y = med, color = dens), linewidth = 1) +
+  scale_fill_manual(values = c("olivedrab", "steelblue")) +
+  scale_color_manual(values = c("olivedrab", "steelblue")) +
+  labs(x = "No. samples (at 8 tech. replicates)",
+       y = "Cumulative detection probability\nat infested site (%)",
+       fill = "",
+       color = "") +
+  theme_bw() +
+  theme(text = element_text(size = 12))
+)
+
+library(patchwork)
+
+techreps_plot + samps_plot
+
+ggsave("figures/model_with_qPCRrep2.jpg", width = 9, height = 4, dpi = 400)
+```

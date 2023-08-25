@@ -1,0 +1,73 @@
+
+model {
+
+# Priors and model for params
+int.psi ~ dunif(0,1)         # Intercept of occupancy probability
+gamma0 <- logit(int.psi)       # same on logit scale
+gamma.hmdens ~ dnorm(0, 0.1)   # season covariate on logit(site-level occupancy)
+
+int.theta ~ dunif(0,1)       # Intercept plot-level occupancy probability
+beta0 <- logit(int.theta)      # same on logit scale
+beta.hmdens ~ dnorm(0, 0.1)   # covariate on logit(tree-level occupancy)
+beta.roller.mulch ~ dnorm(0, 0.1) # covariate on logit(tree/sample-level occupancy)
+
+int.p ~ dunif(0,1)           # Intercept detection probability
+alpha0 <- logit(int.p)         # same on logit scale
+alpha.hmdens ~ dnorm(0, 0.1)   # covariate on logit(detection given DNA capture)
+alpha.roller.mulch ~ dnorm(0, 0.1) # covariate on logit(detection given DNA capture)
+
+# Likelihood
+for (i in 1:n.sites){
+   # Occurrence at board i
+   z[i] ~ dbern(psi[i])
+   logit(psi[i]) <- gamma0 + gamma.hmdens * hmdens[i,1,1]
+   for (j in 1:n.trees){
+      # eDNA capture probability (availability) in visit j
+      a[i,j] ~ dbern(z[i] * theta[i,j])
+       logit(theta[i,j]) <- beta0 + beta.hmdens * hmdens[i,j,1] +
+                            beta.roller.mulch * roller.mulch[i,j,1]
+      for (k in 1:n.PCRrep){
+         # detection process for PCR replicate k
+         y[i,j,k] ~ dbern(a[i,j] * p[i,j,k])
+         logit(p[i,j,k]) <- alpha0 + alpha.hmdens * hmdens[i,j,k] +
+                            alpha.roller.mulch * roller.mulch[i,j,k]
+      }
+   }
+ }
+
+# Derived quantities
+# site-level occupancy by density
+logit(psi.low) <- gamma0
+logit(psi.high) <- gamma0 + gamma.hmdens
+
+# Theta or eDNA capture probability
+logit(theta.low.roll) <- beta0 + beta.roller.mulch
+logit(theta.low.mulch) <- beta0
+logit(theta.high.roll) <- beta0 + beta.hmdens + beta.roller.mulch
+logit(theta.high.mulch) <- beta0 + beta.hmdens
+
+# Detection probabity for an individual qPCR replicate
+logit(p.low.roll) <- alpha0 + alpha.roller.mulch
+logit(p.low.mulch) <- alpha0
+logit(p.high.roll) <- alpha0 + alpha.hmdens + alpha.roller.mulch
+logit(p.high.mulch) <- alpha0 + alpha.hmdens
+
+# Equation for 'at least one hit' given presence in sample
+for(i in 1:6){
+p.eDNA_low.roll[i] <- (1-(1-p.low.roll)^i)
+p.eDNA_low.mulch[i] <- (1-(1-p.low.mulch)^i)
+p.eDNA_high.roll[i] <- (1-(1-p.high.roll)^i)
+p.eDNA_high.mulch[i] <- (1-(1-p.high.mulch)^i)
+}
+
+# Equation for total detection = capture x probability of 'at least one hit'
+for(i in 1:6){
+p.eDNA_detect.low.roll[i] <- theta.low.roll * (1-(1-p.low.roll)^i)
+p.eDNA_detect.low.mulch[i] <- theta.low.mulch * (1-(1-p.low.mulch)^i)
+p.eDNA_detect.high.roll[i] <- theta.high.roll * (1-(1-p.high.roll)^i)
+p.eDNA_detect.high.mulch[i] <- theta.high.mulch * (1-(1-p.high.mulch)^i)
+}
+
+
+}
+
