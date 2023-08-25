@@ -1,0 +1,59 @@
+
+model {
+
+# Priors and model for params
+int.psi ~ dunif(0,1)         # Intercept of occupancy probability
+gamma0 <- logit(int.psi)       # same on logit scale
+
+int.theta ~ dunif(0,1)       # Intercept plot-level occupancy probability
+beta0 <- logit(int.theta)      # same on logit scale
+beta.year ~ dnorm(0, 0.1)   # covariate on logit(tree-level occupancy)
+
+int.p ~ dunif(0,1)           # Intercept detection probability
+alpha0 <- logit(int.p)         # same on logit scale
+alpha.year ~ dnorm(0, 0.1)   # covariate on logit(detection given DNA capture)
+
+# Likelihood
+for (i in 1:n.sites){
+   # Occurrence at board i
+   # z[i] ~ dbern(psi[i])
+   # logit(psi[i]) <- gamma0
+   for (j in 1:n.trees){
+      # eDNA capture probability (availability) in visit j
+      a[i,j] ~ dbern(z[i] * theta[i,j])
+       logit(theta[i,j]) <- beta0 + beta.year * year[i,j,1]
+      for (k in 1:n.PCRrep){
+         # detection process for PCR replicate k
+         y[i,j,k] ~ dbern(a[i,j] * p[i,j,k])
+         logit(p[i,j,k]) <- alpha0 + alpha.year * year[i,j,k]
+      }
+   }
+ }
+
+# Derived quantities
+# site-level occupancy by density
+logit(psi.high) <- gamma0
+
+# Theta or eDNA capture probability
+logit(theta.high.roll22) <- beta0
+logit(theta.high.roll23) <- beta0 + beta.year
+
+# Detection probabity for an individual qPCR replicate
+logit(p.high.roll22) <- alpha0
+logit(p.high.roll23) <- alpha0 + alpha.year
+
+# Equation for 'at least one hit' given presence in sample
+for(i in 1:8){
+p.eDNA_high.roll22[i] <- (1-(1-p.high.roll22)^i)
+p.eDNA_high.roll23[i] <- (1-(1-p.high.roll23)^i)
+}
+
+# Equation for total detection = capture x probability of 'at least one hit' w/ 8 tech reps
+for(i in 1:20){
+p.eDNA_detect.high.roll22[i] <- 1-(1-(theta.high.roll22 * (1-(1-p.high.roll22)^8)))^i
+p.eDNA_detect.high.roll23[i] <- 1-(1-(theta.high.roll23 * (1-(1-p.high.roll23)^8)))^i
+}
+
+
+}
+
