@@ -1103,7 +1103,7 @@ crb_eDNA22high <- jagsUI::jags(data = jags.data.roll.qPCR.22high,
 # Examine model output
 crb_eDNA22high
 # saveRDS(crb_eDNA, "output/crb_qPCR_roll_jags_mod_density.rds")
-crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_density.rds")
+# crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_density.rds")
 
 
 # Examine traceplots
@@ -1186,8 +1186,8 @@ colnames(eDNA_preds2) <- c("med", "ll", "ul", "ll10", "ul90")
 
 df_samps <- eDNA_preds %>%
   bind_rows(eDNA_preds2) %>%
-  mutate(numsamps = c(1:100,1:100),
-         dens = c(rep("2022", 100), rep("2023", 100)))
+  mutate(numsamps = c(1:20,1:20),
+         dens = c(rep("2022", 20), rep("2023", 20)))
 
 (samps_plot <- df_samps %>%
     filter(numsamps < 21) %>%
@@ -1201,6 +1201,7 @@ df_samps <- eDNA_preds %>%
   geom_line(aes(x = numsamps, y = med, color = dens), linewidth = 1) +
   scale_fill_manual(values = c("olivedrab", "steelblue")) +
   scale_color_manual(values = c("olivedrab", "steelblue")) +
+  geom_hline(yintercept = 95, lty = 2, color = "darkgray") +
   labs(x = "No. samples (at 8 tech. replicates)",
        y = "Cumulative detection probability\nat infested site (%)",
        fill = "",
@@ -1213,5 +1214,5 @@ library(patchwork)
 
 techreps_plot + samps_plot
 
-ggsave("figures/model_with_qPCRrep_highdensityonly_2022_2023.jpg", width = 9, height = 4, dpi = 400)
+ggsave("figures/model_with_qPCRrep_highdensityonly_2022_2023b.jpg", width = 9, height = 4, dpi = 400)
 ```
