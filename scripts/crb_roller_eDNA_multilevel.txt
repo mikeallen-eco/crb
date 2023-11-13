@@ -19,8 +19,8 @@ alpha.hmdens ~ dnorm(0, 0.1)   # covariate on logit(detection given DNA capture)
 # Likelihood
 for (i in 1:n.sites){
    # Occurrence at board i
-   z[i] ~ dbern(psi[i])
-   logit(psi[i]) <- gamma0 + gamma.hmdens * hmdens[i,1,1]
+   # z[i] ~ dbern(psi[i])
+   # logit(psi[i]) <- gamma0 + gamma.hmdens * hmdens[i,1,1]
    for (j in 1:n.trees){
       # eDNA capture probability (availability) in visit j
       a[i,j] ~ dbern(z[i] * theta[i,j])
@@ -35,8 +35,8 @@ for (i in 1:n.sites){
 
 # Derived quantities
 # site-level occupancy by density
-logit(psi.low) <- gamma0
-logit(psi.high) <- gamma0 + gamma.hmdens
+# logit(psi.low) <- gamma0
+# logit(psi.high) <- gamma0 + gamma.hmdens
 
 # Theta or eDNA capture probability
 logit(theta.low.roll) <- beta0

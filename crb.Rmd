@@ -3,10 +3,17 @@
 library(readxl)
 library(dplyr)
 library(ggplot2)
+library(stringr)
+library(lubridate)
 
 cr <- read_xlsx("data/CRB eDNA results.xlsx", sheet = "Roller")
 cm <- read_xlsx("data/CRB eDNA results.xlsx", sheet = "Mulch")
 cr22 <- read_xlsx("data/CRB eDNA results 2022.xlsx", sheet = "Roller")
+cm22 <- read_xlsx("data/CRB eDNA results 2022.xlsx", sheet = "Mulch")
+options(digits = 9)
+sites <- read_xlsx("data/April 2023 CRB eDNA site locations.xlsx", sheet = "Sheet1") %>%
+  mutate(lat = as.numeric(str_sub(GPS, 1,8)),
+         lon = -1*as.numeric(str_sub(gsub(GPS, pattern = "W", replacement = ""), 12,21), digits = 9))
 
 # Format roller matrix
 roll.matrix <- apply(cr[,2:ncol(cr)], 2, as.numeric)
@@ -27,6 +34,13 @@ roll.matrix22[1:16,] <- apply(cr[,2:ncol(cr)], 2, as.numeric)
 roll.matrix22[17:18,1:10] <- apply(cr22[,2:ncol(cr22)], 2, as.numeric)
 roll.matrix22.hits <- roll.matrix22
 roll.matrix22[roll.matrix22>0] <- 1
+
+# Format mulch matrix including 2022
+mulch.matrix22high <- matrix(nrow = 2, ncol = 11)
+mulch.matrix22high[1,1:10] <- apply(cm[15,2:11], 2, as.numeric)
+mulch.matrix22high[2,1:11] <- apply(cm22[1,2:ncol(cm22)], 2, as.numeric)
+mulch.matrix22high.hits <- mulch.matrix22high
+mulch.matrix22high[mulch.matrix22high>0] <- 1
 
 # Format roller matrix - just high density sites in 2022 & 2023
 roll.matrix22high.hits <- roll.matrix22.hits[c(15,17,18),]
@@ -88,6 +102,23 @@ y.roll22[,,i] <- lapply(1:37, FUN = function(x) do.call(c, tlist[[x]][,i])) %>%
 z.roll22 = apply(y.roll22, 1, max, na.rm = T)
 # z.trap = apply(trap.matrix, 1, max, na.rm = T)
 # z.both = apply(cbind(z.roll, z.trap), 1, max)
+
+### make a mulch detection/non-detection array (including 2022 data)
+tlist <- list()
+# apply the function to each tree column
+for(i in 1:11) {
+tlist[[i]] <- sapply(mulch.matrix22high.hits[,i], FUN = make_pcr) %>% t()
+}
+
+# create array of PCR detections
+y.mulch22high <- array(dim = c(2, 11, 3))
+for(i in 1:3){
+y.mulch22high[,,i] <- lapply(1:11, FUN = function(x) do.call(c, tlist[[x]][,i])) %>%
+  do.call(rbind, .) %>%
+  t()
+}
+
+z.mulch22high = apply(y.mulch22high, 1, max, na.rm = T)
 
 # subset y.roll22 to just the "high density" sites
 y.roll22high <- y.roll22[c(15, 17, 18),,]
@@ -164,6 +195,9 @@ year.22high[1,,] <- 1
 year.22high[2,,] <- 0
 year.22high[3,,] <- 0
 
+# Create covariate for 2022 vs. 2023 for mulch
+year.22high.mulch <- year.22high[1:2,1:11,]
+
 # Bundle and summarize data set
 jags.data.roll <- list(
   y = y.roll.mat,
@@ -200,6 +234,16 @@ jags.data.roll.qPCR.22high <- list(
   year = year.22high
 )
 
+# Bundle and summarize data set
+jags.data.mulch.qPCR.22high <- list(
+  y = y.mulch22high,
+  z = rep(1,2), # mark as present at all sites
+  n.sites = nrow(y.mulch22high),
+  n.trees = ncol(y.mulch22high),
+  n.PCRrep = dim(y.mulch22high)[3],
+  year = year.22high.mulch
+)
+
 # Bundle and summarize data set for "roller & mulch qPCR level"
 jags.data.both.qPCR <- list(
   y = y.both,
@@ -213,6 +257,87 @@ jags.data.both.qPCR <- list(
   roller.mulch = roller.mulch.array
 )
 
+#########
+## Load and format trap data
+#########
+
+tn1 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "Hau_ulaSite1_ExportTable")
+tn2 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "Punalu_uSite1_ExportTable")
+tn3 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "Punalu_uSite2_ExportTable")
+tn4 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "Punalu_uSite3_ExportTable")
+tn5 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "Punalu_uSite4_ExportTable")
+tn6 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "WaimanaloSite1_ExportTable")
+tn7 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "WaimanaloSite2_ExportTable")
+tn8 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "WaimanaloSite3_ExportTable")
+tn9 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "WaimanaloSite4_ExportTable")
+tn10 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "WaimanaloSite5_ExportTable")
+tn11 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "WaimanaloSite6_ExportTable")
+tn12 <- read_xls("data/NegativeCRBDatawithinSampleSiteBuffers.xls", sheet = "HawaiiKaiSite1_ExportTable")
+
+tn <- bind_rows(tn1, tn2, tn3, tn4, tn5, tn6, tn7, tn8, tn9, tn10, tn11, tn12) %>%
+  select(-OBJECTID) %>%
+  distinct()
+
+# import trap detections
+
+tp1 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", sheet = "KaneoheSite1_ExportTable")
+tp2 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", sheet = "Hau_ulaSite1_ExportTable")
+tp3 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", sheet = "Hau_ulaSite2_ExportTable")
+tp4 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", sheet = "Hau_ulaSite3_ExportTable")
+tp5 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", sheet = "Hau_ulaSite4_ExportTable")
+tp6 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", sheet = "Punalu_uSite1_ExportTable")
+tp7 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", sheet = "Punalu_uSite2_ExportTable")
+tp8 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", sheet = "Punalu_uSite3_ExportTable")
+tp9 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", sheet = "Punalu_uSite4_ExportTable")
+tp10 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", 
+                sheet = "WaimanaloSite1_ExportTable")
+tp11 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", 
+                sheet = "WaimanaloSite2_ExportTable")
+tp12 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", 
+                sheet = "WaimanaloSite3_ExportTable")
+tp13 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", 
+                sheet = "WaimanaloSite4_ExportTable")
+tp14 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", 
+                sheet = "WaimanaloSite5_ExportTable")
+tp15 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", 
+                sheet = "WaimanaloSite6_ExportTable")
+tp16 <- read_xls("data/CRB Trap Finds within eDNA Sample Sites.xls", 
+                sheet = "HawaiiKaiSite1_ExportTable")
+
+tp <- bind_rows(tp1, tp2, tp3, tp4, tp5, tp6, tp7, tp8, tp9, tp10, tp11, tp12,
+                tp13, tp14, tp15, tp16) %>%
+  select(-OBJECTID) %>%
+  distinct()
+
+rm(tn1, tn2, tn3, tn4, tn5, tn6, tn7, tn8, tn9, tn10, tn11, tn12, 
+   tp1, tp2, tp3, tp4, tp5, tp6, tp7, tp8, tp9, tp10, tp11, tp12,
+                tp13, tp14, tp15, tp16)
+
+# bind trap detection and non-detection data together and format
+tn_tmp <- tn %>%
+  select(id = Location_N, lat = Latitude, lon = Longitude, 
+         Deploy_Dat, Activity_D, type = Tool_Name) %>%
+  mutate(deploy_date = ymd(Deploy_Dat),
+         check_date = ymd(Activity_D),
+         det = 0,
+         stage = "NA") %>%
+  select(-Activity_D, -Deploy_Dat)
+
+tp_tmp <- tp %>%
+    select(id = Location_Name, lat = Latitude, lon = Longitude, 
+         Date_Assigned, type = Tool_Name, stage = CRB_Class) %>%
+  mutate(date_tmp = str_sub(Date_Assigned,1,10),
+         check_date = ymd(date_tmp),
+         det = 1) %>%
+  select(-Date_Assigned, -date_tmp)
+
+tt <- tn_tmp %>%
+  bind_rows(tp_tmp) %>%
+  select(-stage) %>% # remove M/F info for now
+  group_by(id, lat, lon, type, deploy_date, check_date, det) %>%
+  summarize(num = sum(det),
+            .groups = "drop") %>%
+    arrange(id, check_date)
 
 ```
 
@@ -771,8 +896,8 @@ alpha.hmdens ~ dnorm(0, 0.1)   # covariate on logit(detection given DNA capture)
 # Likelihood
 for (i in 1:n.sites){
    # Occurrence at board i
-   z[i] ~ dbern(psi[i])
-   logit(psi[i]) <- gamma0 + gamma.hmdens * hmdens[i,1,1]
+   # z[i] ~ dbern(psi[i])
+   # logit(psi[i]) <- gamma0 + gamma.hmdens * hmdens[i,1,1]
    for (j in 1:n.trees){
       # eDNA capture probability (availability) in visit j
       a[i,j] ~ dbern(z[i] * theta[i,j])
@@ -787,8 +912,8 @@ for (i in 1:n.sites){
 
 # Derived quantities
 # site-level occupancy by density
-logit(psi.low) <- gamma0
-logit(psi.high) <- gamma0 + gamma.hmdens
+# logit(psi.low) <- gamma0
+# logit(psi.high) <- gamma0 + gamma.hmdens
 
 # Theta or eDNA capture probability
 logit(theta.low.roll) <- beta0
@@ -805,7 +930,7 @@ p.eDNA_high.roll[i] <- (1-(1-p.high.roll)^i)
 }
 
 # Equation for total detection = capture x probability of 'at least one hit' w/ 8 tech reps
-for(i in 1:30){
+for(i in 1:100){
 p.eDNA_detect.low.roll[i] <- 1-(1-(theta.low.roll * (1-(1-p.low.roll)^8)))^i
 p.eDNA_detect.high.roll[i] <- 1-(1-(theta.high.roll * (1-(1-p.high.roll)^8)))^i
 }
@@ -849,6 +974,9 @@ params <- c("gamma0", "gamma.hmdens",
 #####################################
 #### Run jags model
 #####################################
+# define hmdens as high density only (i.e., group low/med vs. high)
+jags.data.roll.qPCR2 <- jags.data.roll.qPCR
+jags.data.roll.qPCR2$hmdens <- jags.data.roll.qPCR$hdens
 crb_eDNA <- jagsUI::jags(data = jags.data.roll.qPCR,
                          inits = inits,
                          parameters.to.save = params,
@@ -864,8 +992,7 @@ crb_eDNA <- jagsUI::jags(data = jags.data.roll.qPCR,
 
 # Examine model output
 crb_eDNA
-# saveRDS(crb_eDNA, "output/crb_qPCR_roll_jags_mod_density.rds")
-crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_density.rds")
+# saveRDS(crb_eDNA, "output/crb_qPCR_roll_jags_mod_highmed_v_low_density_aug29.rds")
 
 
 # Examine traceplots
@@ -902,7 +1029,7 @@ colnames(eDNA_preds2) <- c("med", "ll", "ul", "ll10", "ul90")
 df <- eDNA_preds %>%
   bind_rows(eDNA_preds2) %>%
   mutate(techreps = c(1:8,1:8),
-         dens = c(rep("Low density", 8), rep("High density", 8)))
+         dens = c(rep("Low density", 8), rep("High/med. density", 8)))
 
 (techreps_plot <- df %>%
   ggplot() +
@@ -917,7 +1044,7 @@ df <- eDNA_preds %>%
              size = 3) +
   scale_color_manual(values = c("olivedrab", "steelblue")) +
   labs(x = "Technical replicates",
-       y = "Detection prob. given eDNA capture\nwithin sample",
+       y = "Detection prob. given eDNA capture\nwithin roller sample",
        color = "") +
   theme_bw() +
     guides(color = "none")
@@ -961,7 +1088,7 @@ df_samps <- eDNA_preds %>%
   geom_line(aes(x = numsamps, y = med, color = dens), linewidth = 1) +
   scale_fill_manual(values = c("olivedrab", "steelblue")) +
   scale_color_manual(values = c("olivedrab", "steelblue")) +
-  labs(x = "No. samples (at 8 tech. replicates)",
+  labs(x = "No. roller samples (at 8 tech. replicates)",
        y = "Cumulative detection probability\nat infested site (%)",
        fill = "",
        color = "") +
@@ -973,7 +1100,7 @@ library(patchwork)
 
 techreps_plot + samps_plot
 
-ggsave("figures/model_with_qPCRrep2.jpg", width = 9, height = 4, dpi = 400)
+ggsave("figures/model_with_qPCRrep_highmed_vs_low.jpg", width = 9, height = 4, dpi = 400)
 ```
 
 
@@ -1156,7 +1283,7 @@ df <- eDNA_preds %>%
              size = 3) +
   scale_color_manual(values = c("olivedrab", "steelblue")) +
   labs(x = "Technical replicates",
-       y = "Detection prob. given eDNA capture\nwithin sample",
+       y = "Detection prob. given eDNA capture\nwithin sample (roller)",
        color = "") +
   theme_bw() +
     guides(color = "none")
@@ -1202,7 +1329,7 @@ df_samps <- eDNA_preds %>%
   scale_fill_manual(values = c("olivedrab", "steelblue")) +
   scale_color_manual(values = c("olivedrab", "steelblue")) +
   geom_hline(yintercept = 95, lty = 2, color = "darkgray") +
-  labs(x = "No. samples (at 8 tech. replicates)",
+  labs(x = "No. roller samples (at 8 tech. replicates)",
        y = "Cumulative detection probability\nat infested site (%)",
        fill = "",
        color = "") +
@@ -1214,5 +1341,174 @@ library(patchwork)
 
 techreps_plot + samps_plot
 
-ggsave("figures/model_with_qPCRrep_highdensityonly_2022_2023b.jpg", width = 9, height = 4, dpi = 400)
+ggsave("figures/model_with_qPCRrep_highdensityonly_2022_2023_roller.jpg", width = 9, height = 4, dpi = 400)
+```
+
+
+
+##### MULCH
+
+
+# Run Bayesian qPCR-replicate-based multilevel occupancy model in JAGS
+model from Dorazio & Errickson 2018 (code from Kery & Royle 2015)
+```{r}
+# Initial values
+inits <- function() list(a = apply(y.mulch22high, c(1,2), max), 
+                         # inits for availability (a)
+                         # z = ifelse(z.both>1,as.numeric(1),as.numeric(NA)), # inits for presence (z)
+                         int.psi = runif(1), 
+                         int.theta = runif(1),
+                         int.p = runif(1), 
+                         gamma.hmdens = rnorm(1, 0, 1),
+                         beta.hmdens = rnorm(1, 0, 1),
+                         alpha.hmdens = rnorm(1,0, 1),
+                         gamma.roller.mulch = rnorm(1, 0, 1),
+                         beta.roller.mulch = rnorm(1, 0, 1),
+                         alpha.roller.mulch = rnorm(1,0, 1))
+
+# Parameters monitored
+params <- c("gamma0", 
+            "beta0", "beta.year", 
+            "alpha0", "alpha.year", 
+            "psi.low", "psi.high",
+            "theta.high.roll22", 
+            "theta.high.roll23", 
+            "p.high.roll22", 
+            "p.high.roll23", 
+            "p.eDNA_detect.high.roll22", 
+            "p.eDNA_detect.high.roll23", 
+            "p.eDNA_high.roll22", 
+            "p.eDNA_high.roll23")
+
+#####################################
+#### Run jags model
+#####################################
+crb_eDNA22high.mulch <- jagsUI::jags(data = jags.data.mulch.qPCR.22high,
+                         inits = inits,
+                         parameters.to.save = params,
+                         model.file = "scripts/crb_roller_eDNA_multilevel_year.txt",
+                         n.chains = 3,
+                         n.adapt = NULL,
+                         n.burnin = 20000,
+                         n.iter = 120000, 
+                         n.thin = 10,
+                         parallel = T,
+                         verbose = TRUE,
+                         modules = NULL)
+
+# Examine model output
+crb_eDNA22high.mulch
+# saveRDS(crb_eDNA, "output/crb_qPCR_roll_jags_mod_density.rds")
+# crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_density.rds")
+
+
+# Examine traceplots
+# jagsUI::traceplot(skink_eDNA)
+```
+# summarizing posteriors for multilevel roller eDNA JAGS model
+qPCR-relplicate detection probability model (Dorazio & Erickson, 2018)
+```{r}
+# load the multilevel roller eDNA JAGS model
+# crb_eDNA <- readRDS("output/skink_eDNA_jags_mod_materials.rds")
+crb_eDNA <- crb_eDNA22high.mulch
+
+# tech reps (high dens 2022)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_high.roll22)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_high.roll22)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_high.roll22)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll22, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll22, 2, function(x) quantile(x, 0.1)))
+eDNA_preds <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds) <- c("med", "ll", "ul", "ll10", "ul90")
+
+# tech reps (high dens 2023)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_high.roll23)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_high.roll23)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_high.roll23)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll23, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll23, 2, function(x) quantile(x, 0.1)))
+eDNA_preds2 <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds2) <- c("med", "ll", "ul", "ll10", "ul90")
+
+df <- eDNA_preds %>%
+  bind_rows(eDNA_preds2) %>%
+  mutate(techreps = c(1:8,1:8),
+         dens = c(rep("2022", 8), rep("2023", 8)))
+
+(techreps_plot <- df %>%
+  ggplot() +
+  geom_errorbar(aes(x = techreps, ymin = ll, ymax = ul, color = dens),
+                position = position_dodge(width = 1),
+                width = 0) +
+  geom_errorbar(aes(x = techreps, ymin = ll10, ymax = ul90, color = dens),
+                position = position_dodge(width = 1),
+                width = 0, linewidth = 1) +
+  geom_point(aes(x = techreps, y = med, color = dens),
+                position = position_dodge(width = 1),
+             size = 3) +
+  scale_color_manual(values = c("olivedrab", "steelblue")) +
+  labs(x = "Technical replicates",
+       y = "Detection prob. given eDNA capture\nwithin sample (mulch)",
+       color = "") +
+  theme_bw() +
+    guides(color = "none")
+)
+
+# num samples at 8 tech reps (high dens 2022)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_detect.high.roll22)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_detect.high.roll22)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_detect.high.roll22)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_detect.high.roll22, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_detect.high.roll22, 2, function(x) quantile(x, 0.1)))
+eDNA_preds <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds) <- c("med", "ll", "ul", "ll10", "ul90")
+
+# tech reps (high dens 2023)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_detect.high.roll23)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_detect.high.roll23)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_detect.high.roll23)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_detect.high.roll23, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_detect.high.roll23, 2, function(x) quantile(x, 0.1)))
+eDNA_preds2 <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds2) <- c("med", "ll", "ul", "ll10", "ul90")
+
+df_samps <- eDNA_preds %>%
+  bind_rows(eDNA_preds2) %>%
+  mutate(numsamps = c(1:20,1:20),
+         dens = c(rep("2022", 20), rep("2023", 20)))
+
+(samps_plot <- df_samps %>%
+    filter(numsamps < 21) %>%
+  ggplot() +
+  geom_ribbon(aes(x = numsamps, ymin = ll, ymax = ul, fill = dens),
+                position = position_dodge(width = 1),
+              alpha = 0.5) +
+  # geom_ribbon(aes(x = numsamps, ymin = ll10, ymax = ul90, fill = dens),
+  #               position = position_dodge(width = 1),
+  #             alpha = 0.5) +
+  geom_line(aes(x = numsamps, y = med, color = dens), linewidth = 1) +
+  scale_fill_manual(values = c("olivedrab", "steelblue")) +
+  scale_color_manual(values = c("olivedrab", "steelblue")) +
+  geom_hline(yintercept = 95, lty = 2, color = "darkgray") +
+  labs(x = "No. mulch samples (at 8 tech. replicates)",
+       y = "Cumulative detection probability\nat infested site (%)",
+       fill = "",
+       color = "") +
+  theme_bw() +
+  theme(text = element_text(size = 12))
+)
+
+library(patchwork)
+
+techreps_plot + samps_plot
+
+ggsave("figures/model_with_qPCRrep_highdensityonly_2022_2023_mulch.jpg", width = 9, height = 4, dpi = 400)
 ```
