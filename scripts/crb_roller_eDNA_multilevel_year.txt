@@ -54,6 +54,11 @@ p.eDNA_detect.high.roll22[i] <- 1-(1-(theta.high.roll22 * (1-(1-p.high.roll22)^8
 p.eDNA_detect.high.roll23[i] <- 1-(1-(theta.high.roll23 * (1-(1-p.high.roll23)^8)))^i
 }
 
+# Equation for total DNA capture (probability of 'at least one' sample w/ DNA)
+for(i in 1:20){
+cumcapture22[i] <- 1-(1-theta.high.roll22)^i
+cumcapture23[i] <- 1-(1-theta.high.roll23)^i
+}
 
 }
 

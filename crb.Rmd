@@ -14,6 +14,9 @@ options(digits = 9)
 sites <- read_xlsx("data/April 2023 CRB eDNA site locations.xlsx", sheet = "Sheet1") %>%
   mutate(lat = as.numeric(str_sub(GPS, 1,8)),
          lon = -1*as.numeric(str_sub(gsub(GPS, pattern = "W", replacement = ""), 12,21), digits = 9))
+# 3 mo +/- is ~ [13, 193]
+# 2 mo is ~ 43,163
+# 1 mo is 73,133
 
 # Format roller matrix
 roll.matrix <- apply(cr[,2:ncol(cr)], 2, as.numeric)
@@ -337,9 +340,765 @@ tt <- tn_tmp %>%
   group_by(id, lat, lon, type, deploy_date, check_date, det) %>%
   summarize(num = sum(det),
             .groups = "drop") %>%
-    arrange(id, check_date)
+    arrange(id, check_date) %>%
+  mutate(lon = -1*abs(lon),
+         check_ord = yday(check_date),
+         mo3 = case_when(check_ord %in% 13:193 ~ 1,
+                         TRUE ~ 0),
+         mo1 = case_when(check_ord %in% 73:133 ~ 1,
+                         TRUE ~ 0))
+
+library(sf)
+
+sites.sf <- sites %>%
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326)
+
+plot(sites.sf[,"Site"])
+
+sites.sf.1k <- sites.sf %>%
+  st_buffer(dist = 500)
+
+tt3 <- tt %>%
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326) %>%
+  st_join(sites.sf.1k) %>%
+  filter(!is.na(GPS)) %>%
+  filter(mo3 ==1) %>%
+  # as.data.frame() %>%
+  group_by(id, Site) %>%
+  tidyr::replace_na(list(deploy_date = ymd("1900-01-01"))) %>%
+  summarize(any_dets = max(det),
+            num_dets = sum(det),
+            num_checks = length(check_ord),
+            tot_indiv = sum(num),
+            mincheck = min(check_ord),
+            maxcheck = max(check_ord),
+            deploy_yr = max(year(deploy_date)),
+            deploy_ord = max(yday(deploy_date)),
+            .groups = "drop"
+            ) %>%
+  mutate(deploy_dur = case_when(((deploy_yr == 2023) & (deploy_ord < 13)) ~ maxcheck-13,
+                                ((deploy_yr == 2023) & (deploy_ord >= 13)) ~ maxcheck-mincheck,
+                                (deploy_yr < 2023) ~ maxcheck-13)) %>%
+  rename(site = Site) %>%
+  arrange(site, id)
+
+tt1 <- tt %>%
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326) %>%
+  st_join(sites.sf.1k) %>%
+  filter(!is.na(GPS)) %>%
+  filter(mo3 ==1) %>%
+  # as.data.frame() %>%
+  group_by(id, Site) %>%
+  tidyr::replace_na(list(deploy_date = ymd("1900-01-01"))) %>%
+  summarize(any_dets = max(det),
+            num_dets = sum(det),
+            num_checks = length(check_ord),
+            tot_indiv = sum(num),
+            mincheck = min(check_ord),
+            maxcheck = max(check_ord),
+            deploy_yr = max(year(deploy_date)),
+            deploy_ord = max(yday(deploy_date)),
+            .groups = "drop"
+            ) %>%
+  mutate(deploy_dur = case_when(((deploy_yr == 2023) & (deploy_ord < 73)) ~ maxcheck-73,
+                                ((deploy_yr == 2023) & (deploy_ord >= 73)) ~ maxcheck-mincheck,
+                                (deploy_yr < 2023) ~ maxcheck-73)) %>%
+  rename(site = Site) %>%
+  arrange(site, id)
+
+ggplot(sites.sf.1k) +
+  geom_sf() +
+  # geom_sf(data = sites.sf, color = "black", size = 1) +
+  geom_sf(data = tt3, color = "red", size = 0.5)
+
+
+tt1.dets = tt1 %>%
+  as.data.frame() %>%
+  group_by(site) %>%
+  mutate(visit = paste0("T", 1:length(site))) %>%
+  select(site, any_dets, visit) %>%
+  tidyr::pivot_wider(id_cols = site, names_from = visit, values_from = any_dets)
+
+# combine roller, mulch, and trap (3 mo) data into one big matrix
+call <- cr %>%
+  left_join(cm) %>%
+  rename(site = Site) %>%
+  left_join(tt3.dets)
+
+call.mat1 <- call %>%
+  select(-site) %>%
+  as.matrix() %>%
+  as.numeric() %>%
+  matrix(nrow = 16, ncol = 85)
+call.mat <- call.mat1
+call.mat[call.mat1>0] <- 1
+
+# add 3 rows of NAs on the bottom to make room for 2022 roller and mulch samples
+call.mat1b <- call.mat1 %>%
+  rbind(matrix(NA, nrow = 2, ncol = 85))
+add_to_cm22 <- matrix(NA, nrow = 1, ncol = 11)
+
+cmcr22 <- matrix(NA, nrow = 16, ncol = 21) %>%
+  rbind(
+    cbind(as.matrix(cr22[,2:11]), rbind(add_to_cm22, as.matrix(cm22[,2:12])))
+    )
+
+call.mat.full1 <- call.mat1b %>%
+  cbind(cmcr22) %>%
+  as.numeric() %>%
+  matrix(nrow = 18, ncol = 106)
+
+call.mat.full <- call.mat.full1
+call.mat.full[call.mat.full>0] <- 1
+
+# make a matrix of methods for covariate (1 = roller, 2 = mulch, 3 = trap)
+mulch <- matrix(c(rep(rep(0,18), 37), 
+                  rep(rep(1,18), 32), 
+                  rep(rep(0,18), 16), 
+                  rep(rep(0,18), 10), 
+                  rep(rep(0,18), 11)), 
+                nrow = 18, ncol = 106)
+trap <- matrix(c(rep(rep(0,18), 37), 
+                 rep(rep(0,18), 32), 
+                 rep(rep(1,18), 16), 
+                  rep(rep(0,18), 10), 
+                  rep(rep(0,18), 11)), 
+                nrow = 18, ncol = 106)
+roll22 <- matrix(c(rep(rep(0,18), 37), 
+                 rep(rep(0,18), 32), 
+                 rep(rep(0,18), 16), 
+                  rep(rep(1,18), 10), 
+                  rep(rep(0,18), 11)), 
+                nrow = 18, ncol = 106)
+mulch22 <- matrix(c(rep(rep(0,18), 37), 
+                 rep(rep(0,18), 32), 
+                 rep(rep(0,18), 16), 
+                  rep(rep(0,18), 10), 
+                  rep(rep(1,18), 11)), 
+                nrow = 18, ncol = 106)
+
+(z.trap = apply(call.mat.full, 1, max, na.rm = T))
+
+# Bundle and summarize data set with traps
+jags.data.traps <- list(
+  y = call.mat.full,
+  z = ifelse(z.trap > 0, 1, NA),
+  n.sites = nrow(call.mat.full),
+  n.samps = ncol(call.mat.full),
+  mulch = mulch,
+  trap = trap,
+  roll22 = roll22,
+  mulch22 = mulch22
+)
+```
+
+
+# Including traps
+
+# Define visit-level occupancy model in BUGS language
+Can apply to either trap, roll, or mulch detection/non-detection data.
+```{r}
+sink("scripts/crb_trap_eDNA.txt")
+cat("
+model {
+
+# Priors
+mean.psi ~ dunif(0, 1)        # Occupancy intercept on prob. scale
+gamma0 <- logit(mean.psi)      #   same on logit scale
+
+mean.p ~ dunif(0, 1)          # Detection intercept on prob. scale
+alpha0 <- logit(mean.p)       #   same on logit scale
+alpha.mulch ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+alpha.trap ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+alpha.roll22 ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+alpha.mulch22 ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+
+# Likelihood
+for (i in 1:n.sites) {
+  z[i] ~ dbern(psi[i])
+  logit(psi[i]) <- gamma0
+  
+   for (j in 1:n.samps) {
+      y[i,j] ~ dbern(z[i] * p[i,j])
+      logit(p[i,j]) <- alpha0 + alpha.mulch * mulch[i,j] +
+                       alpha.trap * trap[i,j] +
+                       alpha.roll22 * roll22[i,j] +
+                       alpha.mulch22 * mulch22[i,j]
+   }
+}
+
+# Derived quantities
+# site-level occupancy for different densities
+logit(psi.all) <- gamma0
+
+# detection probability
+logit(p.roll) <- alpha0
+logit(p.mulch) <- alpha0 + alpha.mulch
+logit(p.trap) <- alpha0 + alpha.trap
+logit(p.roll22) <- alpha0 + alpha.roll22
+logit(p.mulch22) <- alpha0 + alpha.mulch22
+p.traproll.20 <- (1 - (1 - p.trap)*(1 - p.roll)^20)
+p.traproll22.20 <- (1 - (1 - p.trap)*(1 - p.roll22)^20)
+p.trapmulch.20 <- (1 - (1 - p.trap)*(1 - p.mulch)^20)
+p.trapmulch22.20 <- (1 - (1 - p.trap)*(1 - p.mulch22)^20)
+p.roll.20 <- (1 - (1 - p.roll)^20)
+p.mulch.20 <- (1 - (1 - p.mulch)^20)
+p.roll22.20 <- (1 - (1 - p.roll22)^20)
+p.mulch22.20 <- (1 - (1 - p.mulch22)^20)
+p.traproll.10 <- (1 - (1 - p.trap)*(1 - p.roll)^10)
+p.traproll22.10 <- (1 - (1 - p.trap)*(1 - p.roll22)^10)
+p.trapmulch.10 <- (1 - (1 - p.trap)*(1 - p.mulch)^10)
+p.trapmulch22.10 <- (1 - (1 - p.trap)*(1 - p.mulch22)^10)
+p.roll.10 <- (1 - (1 - p.roll)^10)
+p.mulch.10 <- (1 - (1 - p.mulch)^10)
+p.roll22.10 <- (1 - (1 - p.roll22)^10)
+p.mulch22.10 <- (1 - (1 - p.mulch22)^10)
+
+# # Cumulative sample-level detection probability for samples within an occupied site
+# for(i in 1:150){
+# p_tree_n_roll[i] <- (1 - (1 - p.roll)^i)
+# p_tree_n_mulch[i] <- (1 - (1 - p.mulch)^i)
+# p_tree_n_trap[i] <- (1 - (1 - p.trap)^i)
+# p_tree_n_both[i] <- (1 - (1 - p_tree_n_roll[i])*(1 - p_tree_n_trap[i])^25)
+# }
+
+}
+
+",fill=TRUE)
+sink()
 
 ```
+# Run Visual occupany model in JAGS
+```{r}
+# Initial values
+inits <- function() list(int.psi = runif(1), 
+                         int.p = runif(1), 
+                         alpha.mulch = rnorm(1,0,1),
+                         alpha.trap = rnorm(1,0,1),
+                         alpha.roll22 = rnorm(1,0,1),
+                         alpha.mulch22 = rnorm(1,0,1)
+                         )
+
+# Parameters monitored
+params <- c("gamma0", 
+            "alpha0", "alpha.mulch", "alpha.trap",
+            "psi.all",
+            "p.traproll.20", "p.traproll22.20",
+            "p.trapmulch.20", "p.trapmulch22.20",             
+            "p.traproll.10", "p.traproll22.10",
+            "p.trapmulch.10", "p.trapmulch22.10", 
+            "p.trap", 
+            "p.roll.20", "p.mulch.20",
+            "p.roll22.20", "p.mulch22.20",
+            "p.roll.10", "p.mulch.10",
+            "p.roll22.10", "p.mulch22.10",
+            "p.roll", "p.roll22", "p.mulch", "p.mulch22")
+
+#####################################
+#### Run jags model
+#####################################
+crb_trap <- jagsUI::jags(data = jags.data.traps,
+                         inits = inits,
+                         parameters.to.save = params,
+                         model.file = "scripts/crb_trap_eDNA.txt",
+                         n.chains = 3,
+                         n.adapt = NULL,
+                         n.burnin = 2000,
+                         n.iter = 50000,
+                         n.thin = 10,
+                         parallel = T,
+                         verbose = TRUE,
+                         modules = NULL)
+
+# saveRDS(crb_trap, "output/crb_roll_jags_mod_trap.rds")
+crb_trap <- readRDS("output/crb_roll_jags_mod_trap.rds")
+
+# Examine model output
+crb_trap
+plot(crb_trap)
+# Examine traceplots
+# jagsUI::traceplot(crb_roll)
+
+```
+# plot dp of trap and of trap+eDNA
+```{r}
+
+trap.p <- crb_trap$sims.list$p.trap
+traproll.20.p <- crb_trap$sims.list$p.traproll.20
+traproll22.20.p <- crb_trap$sims.list$p.traproll22.20
+
+
+
+```
+# Graphing detection probability of trap and "trap + roller eDNA"
+```{r}
+
+# format posterior data for roller
+crb_plot = data.frame(posterior = c(crb_trap$sims.list$p.trap,
+                         crb_trap$sims.list$p.traproll.10,
+                         crb_trap$sims.list$p.traproll22.10
+                         ),
+           method = c(rep("Trap only (60 d)", 14400), 
+                      rep("Trap + 10 eDNA samples\n(rainy season)", 14400),
+                      rep("Trap + 10 eDNA samples\n(dry season)", 14400)),
+           sub = "Roller"
+           )
+
+# format posterior data for mulch
+crb_plot.m = data.frame(posterior = c(crb_trap$sims.list$p.trap,
+                         crb_trap$sims.list$p.trapmulch.10,
+                         crb_trap$sims.list$p.trapmulch22.10
+                         ),
+           method = c(rep("Trap only (60 d)", 14400), 
+                      rep("Trap + 10 eDNA samples\n(rainy season)", 14400),
+                      rep("Trap + 10 eDNA samples\n(dry season)", 14400)),
+           sub = "Mulch"
+           )
+            
+
+# summarize roller posteriors for plotting medians and 95% CI
+crb_post_sum.r = aggregate(
+  crb_plot$posterior,
+  list(
+    crb_plot$method
+  ),
+  median
+) %>%
+  bind_cols(ll = aggregate(
+    crb_plot$posterior,
+    list(
+      crb_plot$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.025)
+  )$x) %>%
+  bind_cols(ul = aggregate(
+    crb_plot$posterior,
+    list(
+      crb_plot$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.975)
+  )$x) %>%
+  bind_cols(ll10 = aggregate(
+    crb_plot$posterior,
+    list(
+      crb_plot$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.1)
+  )$x) %>%
+  bind_cols(ul90 = aggregate(
+    crb_plot$posterior,
+    list(
+      crb_plot$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.9)
+  )$x) %>%
+  rename(
+    method = Group.1,
+    med = x
+  ) %>%
+  mutate(sub = "Roller")
+
+# summarize mulch posteriors for plotting medians and 95% CI
+crb_post_sum.m = aggregate(
+  crb_plot.m$posterior,
+  list(
+    crb_plot.m$method
+  ),
+  median
+) %>%
+  bind_cols(ll = aggregate(
+    crb_plot.m$posterior,
+    list(
+      crb_plot.m$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.025)
+  )$x) %>%
+  bind_cols(ul = aggregate(
+    crb_plot.m$posterior,
+    list(
+      crb_plot.m$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.975)
+  )$x) %>%
+  bind_cols(ll10 = aggregate(
+    crb_plot.m$posterior,
+    list(
+      crb_plot.m$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.1)
+  )$x) %>%
+  bind_cols(ul90 = aggregate(
+    crb_plot.m$posterior,
+    list(
+      crb_plot.m$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.9)
+  )$x) %>%
+  rename(
+    method = Group.1,
+    med = x
+  ) %>%
+  mutate(sub = "Mulch")
+
+# combine
+
+crb_post_sum <- bind_rows(crb_post_sum.r, crb_post_sum.m)
+
+# make the plot
+
+ggplot() +
+  geom_errorbar(data= crb_post_sum, aes(xmin = ll, xmax = ul,
+                                          y = method,
+                             color = method), width = 0, size = 0.75) +
+  geom_errorbar(data= crb_post_sum, aes(xmin = ll10, xmax = ul90,
+                                          y = method,
+                             color = method), width = 0, size = 1.7) +
+  geom_point(data= crb_post_sum, aes(x = med, y = method,
+                             color = method), size = 4) +
+  scale_fill_manual(values = c("darkblue", "skyblue", "olivedrab")) +
+  scale_color_manual(values = c("darkblue", "skyblue", "olivedrab")) +
+  scale_x_continuous(limits = c(0.5,1)) +
+  facet_wrap(~sub) +
+  theme_bw() +
+  # ggridges::theme_ridges() +
+  theme(text = element_text(size = 14),
+        axis.text.y = element_text(size = 15),
+        strip.text = element_text(size = 14, vjust=0.5), 
+        strip.background = element_rect(fill = "transparent",
+                                        color = NA),
+        axis.title.x = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent", color = NA)) +
+  labs(x = "Detection probability\nat infested site", y = "") +
+  guides(fill = "none", color = "none")
+
+ ggsave("figures/crb_trap.roll.mulch_dp.jpg",
+        dpi = 600, width = 6, height = 4)
+```
+# Graphing detection probability of trap and "trap + roller eDNA" (20 samples)
+```{r}
+
+# format posterior data for roller
+crb_plot = data.frame(posterior = c(crb_trap$sims.list$p.trap,
+                         crb_trap$sims.list$p.traproll.20,
+                         crb_trap$sims.list$p.traproll22.20
+                         ),
+           method = c(rep("Trap only (60 d)", 14400), 
+                      rep("Trap + 20 eDNA samples\n(rainy season)", 14400),
+                      rep("Trap + 20 eDNA samples\n(dry season)", 14400)),
+           sub = "Roller"
+           )
+
+# format posterior data for mulch
+crb_plot.m = data.frame(posterior = c(crb_trap$sims.list$p.trap,
+                         crb_trap$sims.list$p.trapmulch.20,
+                         crb_trap$sims.list$p.trapmulch22.20
+                         ),
+           method = c(rep("Trap only (60 d)", 14400), 
+                      rep("Trap + 20 eDNA samples\n(rainy season)", 14400),
+                      rep("Trap + 20 eDNA samples\n(dry season)", 14400)),
+           sub = "Mulch"
+           )
+            
+
+# summarize roller posteriors for plotting medians and 95% CI
+crb_post_sum.r = aggregate(
+  crb_plot$posterior,
+  list(
+    crb_plot$method
+  ),
+  median
+) %>%
+  bind_cols(ll = aggregate(
+    crb_plot$posterior,
+    list(
+      crb_plot$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.025)
+  )$x) %>%
+  bind_cols(ul = aggregate(
+    crb_plot$posterior,
+    list(
+      crb_plot$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.975)
+  )$x) %>%
+  bind_cols(ll10 = aggregate(
+    crb_plot$posterior,
+    list(
+      crb_plot$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.1)
+  )$x) %>%
+  bind_cols(ul90 = aggregate(
+    crb_plot$posterior,
+    list(
+      crb_plot$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.9)
+  )$x) %>%
+  rename(
+    method = Group.1,
+    med = x
+  ) %>%
+  mutate(sub = "Roller")
+
+# summarize mulch posteriors for plotting medians and 95% CI
+crb_post_sum.m = aggregate(
+  crb_plot.m$posterior,
+  list(
+    crb_plot.m$method
+  ),
+  median
+) %>%
+  bind_cols(ll = aggregate(
+    crb_plot.m$posterior,
+    list(
+      crb_plot.m$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.025)
+  )$x) %>%
+  bind_cols(ul = aggregate(
+    crb_plot.m$posterior,
+    list(
+      crb_plot.m$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.975)
+  )$x) %>%
+  bind_cols(ll10 = aggregate(
+    crb_plot.m$posterior,
+    list(
+      crb_plot.m$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.1)
+  )$x) %>%
+  bind_cols(ul90 = aggregate(
+    crb_plot.m$posterior,
+    list(
+      crb_plot.m$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.9)
+  )$x) %>%
+  rename(
+    method = Group.1,
+    med = x
+  ) %>%
+  mutate(sub = "Mulch")
+
+# combine
+
+crb_post_sum <- bind_rows(crb_post_sum.r, crb_post_sum.m)
+
+# make the plot
+
+ggplot() +
+  geom_errorbar(data= crb_post_sum, aes(xmin = ll, xmax = ul,
+                                          y = method,
+                             color = method), width = 0, size = 0.75) +
+  geom_errorbar(data= crb_post_sum, aes(xmin = ll10, xmax = ul90,
+                                          y = method,
+                             color = method), width = 0, size = 1.7) +
+  geom_point(data= crb_post_sum, aes(x = med, y = method,
+                             color = method), size = 4) +
+  scale_fill_manual(values = c("darkblue", "skyblue", "olivedrab")) +
+  scale_color_manual(values = c("darkblue", "skyblue", "olivedrab")) +
+  scale_x_continuous(limits = c(0.5,1)) +
+  facet_wrap(~sub) +
+  theme_bw() +
+  # ggridges::theme_ridges() +
+  theme(text = element_text(size = 14),
+        axis.text.y = element_text(size = 15),
+        strip.text = element_text(size = 14, vjust=0.5), 
+        strip.background = element_rect(fill = "transparent",
+                                        color = NA),
+        axis.title.x = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent", color = NA)) +
+  labs(x = "Detection probability\nat infested site", y = "") +
+  guides(fill = "none", color = "none")
+
+ ggsave("figures/crb_trap.roll.mulch_dp_20samps.jpg",
+        dpi = 600, width = 6, height = 4)
+```
+# Same but without mulch for presentation
+```{r}
+
+# format posterior data for roller
+crb_plot.10 = data.frame(posterior = c(crb_trap$sims.list$p.trap,
+                         crb_trap$sims.list$p.traproll.10,
+                         crb_trap$sims.list$p.traproll22.10
+                         ),
+           method = c(rep("Trap only (60 d)", 14400), 
+                      rep("Trap + eDNA\n(rainy season)", 14400),
+                      rep("Trap + eDNA\n(dry season)", 14400)),
+           sub = "10 samples"
+           )
+
+# format posterior data for mulch
+crb_plot.20 = data.frame(posterior = c(crb_trap$sims.list$p.trap,
+                         crb_trap$sims.list$p.traproll.20,
+                         crb_trap$sims.list$p.traproll22.20
+                         ),
+           method = c(rep("Trap only (60 d)", 14400), 
+                      rep("Trap + eDNA\n(rainy season)", 14400),
+                      rep("Trap + eDNA\n(dry season)", 14400)),
+           sub = "20 samples"
+           )
+            
+
+# summarize roller (10 samples) posteriors for plotting medians and 95% CI
+crb_post_sum.10 = aggregate(
+  crb_plot.10$posterior,
+  list(
+    crb_plot.10$method
+  ),
+  median
+) %>%
+  bind_cols(ll = aggregate(
+    crb_plot.10$posterior,
+    list(
+      crb_plot.10$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.025)
+  )$x) %>%
+  bind_cols(ul = aggregate(
+    crb_plot.10$posterior,
+    list(
+      crb_plot.10$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.975)
+  )$x) %>%
+  bind_cols(ll10 = aggregate(
+    crb_plot.10$posterior,
+    list(
+      crb_plot.10$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.1)
+  )$x) %>%
+  bind_cols(ul90 = aggregate(
+    crb_plot.10$posterior,
+    list(
+      crb_plot.10$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.9)
+  )$x) %>%
+  rename(
+    method = Group.1,
+    med = x
+  ) %>%
+  mutate(sub = "10 samples")
+
+# summarize roller (20 samples) posteriors for plotting medians and 95% CI
+crb_post_sum.20 = aggregate(
+  crb_plot.20$posterior,
+  list(
+    crb_plot.20$method
+  ),
+  median
+) %>%
+  bind_cols(ll = aggregate(
+    crb_plot.20$posterior,
+    list(
+      crb_plot.20$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.025)
+  )$x) %>%
+  bind_cols(ul = aggregate(
+    crb_plot.20$posterior,
+    list(
+      crb_plot.20$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.975)
+  )$x) %>%
+  bind_cols(ll10 = aggregate(
+    crb_plot.20$posterior,
+    list(
+      crb_plot.20$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.1)
+  )$x) %>%
+  bind_cols(ul90 = aggregate(
+    crb_plot.20$posterior,
+    list(
+      crb_plot.20$method
+    ),
+    FUN = 'quantile',
+    probs = c(0.9)
+  )$x) %>%
+  rename(
+    method = Group.1,
+    med = x
+  ) %>%
+  mutate(sub = "20 samples")
+
+# combine
+
+crb_post_sum <- bind_rows(crb_post_sum.10, crb_post_sum.20)
+
+# make the plot
+
+ggplot() +
+  geom_errorbar(data= crb_post_sum, aes(xmin = ll, xmax = ul,
+                                          y = method,
+                             color = method), width = 0, size = 0.75) +
+  geom_errorbar(data= crb_post_sum, aes(xmin = ll10, xmax = ul90,
+                                          y = method,
+                             color = method), width = 0, size = 1.7) +
+  geom_point(data= crb_post_sum, aes(x = med, y = method,
+                             color = method), size = 4) +
+  scale_fill_manual(values = c("darkblue", "skyblue", "olivedrab")) +
+  scale_color_manual(values = c("darkblue", "skyblue", "olivedrab")) +
+  scale_x_continuous(limits = c(0.5,1)) +
+  facet_wrap(~sub) +
+  theme_bw() +
+  # ggridges::theme_ridges() +
+  theme(text = element_text(size = 14),
+        axis.text.y = element_text(size = 15),
+        strip.text = element_text(size = 14, vjust=0.5), 
+        strip.background = element_rect(fill = "transparent",
+                                        color = NA),
+        axis.title.x = element_text(hjust = 0.5),
+        panel.background = element_rect(fill = "transparent"),
+        plot.background = element_rect(fill = "transparent", color = NA)) +
+  labs(x = "Detection probability\nat infested site", y = "") +
+  guides(fill = "none", color = "none")
+
+ ggsave("figures/crb_trap.roll_dp_10_and_20_samps.jpg",
+        dpi = 600, width = 6, height = 4)
+```
+
+
+
+
+
+
+
 
 # Define visit-level occupancy model in BUGS language
 Can apply to either trap, roll, or mulch detection/non-detection data.
@@ -493,7 +1252,7 @@ note: it's the identical model to the visual model
 # # jagsUI::traceplot(skink_visroll)
 
 ```
-# Graphing detection probability of trap and "trap + roller eDNA"
+# Graphing detection probability 
 ```{r}
 
 
@@ -614,7 +1373,7 @@ kableExtra::save_kable(crb_table,
 ```
 
 
-# Plot cumulative detection probability vs. number of board visits
+# Plot cumulative detection probability vs. number of samples
 ```{r}
 
 # Format data and create figure
@@ -1002,7 +1761,7 @@ crb_eDNA
 qPCR-relplicate detection probability model (Dorazio & Erickson, 2018)
 ```{r}
 # load the multilevel roller eDNA JAGS model
-# crb_eDNA <- readRDS("output/skink_eDNA_jags_mod_materials.rds")
+# crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_highmed_v_low_density_aug29.rds")
 
 # tech reps (low dens)
 med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_low.roll)
@@ -1175,6 +1934,11 @@ p.eDNA_detect.high.roll22[i] <- 1-(1-(theta.high.roll22 * (1-(1-p.high.roll22)^8
 p.eDNA_detect.high.roll23[i] <- 1-(1-(theta.high.roll23 * (1-(1-p.high.roll23)^8)))^i
 }
 
+# Equation for total DNA capture (probability of 'at least one' sample w/ DNA)
+for(i in 1:20){
+cumcapture22[i] <- 1-(1-theta.high.roll22)^i
+cumcapture23[i] <- 1-(1-theta.high.roll23)^i
+}
 
 }
 ",fill=TRUE)
@@ -1209,7 +1973,8 @@ params <- c("gamma0",
             "p.eDNA_detect.high.roll22", 
             "p.eDNA_detect.high.roll23", 
             "p.eDNA_high.roll22", 
-            "p.eDNA_high.roll23")
+            "p.eDNA_high.roll23",
+            "cumcapture22", "cumcapture23")
 
 #####################################
 #### Run jags model
@@ -1229,8 +1994,8 @@ crb_eDNA22high <- jagsUI::jags(data = jags.data.roll.qPCR.22high,
 
 # Examine model output
 crb_eDNA22high
-# saveRDS(crb_eDNA, "output/crb_qPCR_roll_jags_mod_density.rds")
-# crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_density.rds")
+# saveRDS(crb_eDNA22high, "output/crb_qPCR_roll_jags_mod_density_eDNA22high.rds")
+# crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_density_eDNA22high.rds")
 
 
 # Examine traceplots
@@ -1240,7 +2005,7 @@ crb_eDNA22high
 qPCR-relplicate detection probability model (Dorazio & Erickson, 2018)
 ```{r}
 # load the multilevel roller eDNA JAGS model
-# crb_eDNA <- readRDS("output/skink_eDNA_jags_mod_materials.rds")
+# crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_density_eDNA22high.rds")
 crb_eDNA <- crb_eDNA22high
 
 # tech reps (high dens 2022)
@@ -1343,7 +2108,113 @@ techreps_plot + samps_plot
 
 ggsave("figures/model_with_qPCRrep_highdensityonly_2022_2023_roller.jpg", width = 9, height = 4, dpi = 400)
 ```
+# AGAIN but version with THETA increasing (and switched order)
+# summarizing posteriors for multilevel roller eDNA JAGS model
+qPCR-relplicate detection probability model (Dorazio & Erickson, 2018)
+```{r}
+# load the multilevel roller eDNA JAGS model
+crb_eDNA <- readRDS("output/crb_qPCR_roll_jags_mod_density_eDNA22high.rds")
 
+# tech reps (high dens 2022)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_high.roll22)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_high.roll22)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_high.roll22)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll22, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll22, 2, function(x) quantile(x, 0.1)))
+eDNA_preds <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds) <- c("med", "ll", "ul", "ll10", "ul90")
+
+# tech reps (high dens 2023)
+med_eDNA <- data.frame(crb_eDNA$q50$p.eDNA_high.roll23)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$p.eDNA_high.roll23)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$p.eDNA_high.roll23)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll23, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$p.eDNA_high.roll23, 2, function(x) quantile(x, 0.1)))
+eDNA_preds2 <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds2) <- c("med", "ll", "ul", "ll10", "ul90")
+
+df <- eDNA_preds %>%
+  bind_rows(eDNA_preds2) %>%
+  mutate(techreps = c(1:8,1:8),
+         dens = c(rep("2022", 8), rep("2023", 8)))
+
+(techreps_plot <- df %>%
+  ggplot() +
+  geom_errorbar(aes(x = techreps, ymin = ll, ymax = ul, color = dens),
+                position = position_dodge(width = 1),
+                width = 0) +
+  geom_errorbar(aes(x = techreps, ymin = ll10, ymax = ul90, color = dens),
+                position = position_dodge(width = 1),
+                width = 0, linewidth = 1) +
+  geom_point(aes(x = techreps, y = med, color = dens),
+                position = position_dodge(width = 1),
+             size = 3) +
+  scale_color_manual(values = c("olivedrab", "steelblue")) +
+  labs(x = "Technical replicates",
+       y = "Detection prob. given eDNA\ncapture within sample",
+       color = "") +
+  theme_bw()
+)
+
+# cumulative DNA capture probability with increasing number of samples (high dens 2022)
+med_eDNA <- data.frame(crb_eDNA$q50$cumcapture22)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$cumcapture22)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$cumcapture22)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$cumcapture22, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$cumcapture22, 2, function(x) quantile(x, 0.1)))
+eDNA_preds <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds) <- c("med", "ll", "ul", "ll10", "ul90")
+
+# cumulative DNA capture probability with increasing number of samples (high dens 2023)
+med_eDNA <- data.frame(crb_eDNA$q50$cumcapture23)
+ll_eDNA <- data.frame(crb_eDNA$q2.5$cumcapture23)
+ul_eDNA <- data.frame(crb_eDNA$q97.5$cumcapture23)
+ul90_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$cumcapture23, 2, function(x) quantile(x, 0.9)))
+ll10_eDNA <- 
+  data.frame(apply(crb_eDNA$sims.list$cumcapture23, 2, function(x) quantile(x, 0.1)))
+eDNA_preds2 <- cbind(med_eDNA, ll_eDNA, ul_eDNA, ll10_eDNA, ul90_eDNA)*100
+colnames(eDNA_preds2) <- c("med", "ll", "ul", "ll10", "ul90")
+
+df_samps <- eDNA_preds %>%
+  bind_rows(eDNA_preds2) %>%
+  mutate(numsamps = c(1:20,1:20),
+         dens = c(rep("2022", 20), rep("2023", 20)))
+
+(samps_plot <- df_samps %>%
+    filter(numsamps < 21) %>%
+  ggplot() +
+  geom_ribbon(aes(x = numsamps, ymin = ll, ymax = ul, fill = dens),
+                position = position_dodge(width = 1),
+              alpha = 0.5) +
+  # geom_ribbon(aes(x = numsamps, ymin = ll10, ymax = ul90, fill = dens),
+  #               position = position_dodge(width = 1),
+  #             alpha = 0.5) +
+  geom_line(aes(x = numsamps, y = med, color = dens), linewidth = 1) +
+  scale_fill_manual(values = c("olivedrab", "steelblue")) +
+  scale_color_manual(values = c("olivedrab", "steelblue")) +
+  geom_hline(yintercept = 95, lty = 2, color = "darkgray") +
+  labs(x = "No. roller samples",
+       y = "eDNA capture probability within\nsample at infested site (%)",
+       fill = "",
+       color = "") +
+  theme_bw() +
+  theme(text = element_text(size = 12)) +
+    guides(fill = "none", color = "none")
+)
+
+library(patchwork)
+
+samps_plot + techreps_plot
+
+ggsave("figures/model_with_qPCRrep_highdensityonly_2022_2023_roller_updated.jpg", width = 9, height = 4, dpi = 400)
+```
 
 
 ##### MULCH

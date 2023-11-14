@@ -1,0 +1,66 @@
+
+model {
+
+# Priors
+mean.psi ~ dunif(0, 1)        # Occupancy intercept on prob. scale
+gamma0 <- logit(mean.psi)      #   same on logit scale
+
+mean.p ~ dunif(0, 1)          # Detection intercept on prob. scale
+alpha0 <- logit(mean.p)       #   same on logit scale
+alpha.mulch ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+alpha.trap ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+alpha.roll22 ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+alpha.mulch22 ~ dnorm(0, 0.1)   # Covariates on logit(detection)
+
+# Likelihood
+for (i in 1:n.sites) {
+  z[i] ~ dbern(psi[i])
+  logit(psi[i]) <- gamma0
+  
+   for (j in 1:n.samps) {
+      y[i,j] ~ dbern(z[i] * p[i,j])
+      logit(p[i,j]) <- alpha0 + alpha.mulch * mulch[i,j] +
+                       alpha.trap * trap[i,j] +
+                       alpha.roll22 * roll22[i,j] +
+                       alpha.mulch22 * mulch22[i,j]
+   }
+}
+
+# Derived quantities
+# site-level occupancy for different densities
+logit(psi.all) <- gamma0
+
+# detection probability
+logit(p.roll) <- alpha0
+logit(p.mulch) <- alpha0 + alpha.mulch
+logit(p.trap) <- alpha0 + alpha.trap
+logit(p.roll22) <- alpha0 + alpha.roll22
+logit(p.mulch22) <- alpha0 + alpha.mulch22
+p.traproll.20 <- (1 - (1 - p.trap)*(1 - p.roll)^20)
+p.traproll22.20 <- (1 - (1 - p.trap)*(1 - p.roll22)^20)
+p.trapmulch.20 <- (1 - (1 - p.trap)*(1 - p.mulch)^20)
+p.trapmulch22.20 <- (1 - (1 - p.trap)*(1 - p.mulch22)^20)
+p.roll.20 <- (1 - (1 - p.roll)^20)
+p.mulch.20 <- (1 - (1 - p.mulch)^20)
+p.roll22.20 <- (1 - (1 - p.roll22)^20)
+p.mulch22.20 <- (1 - (1 - p.mulch22)^20)
+p.traproll.10 <- (1 - (1 - p.trap)*(1 - p.roll)^10)
+p.traproll22.10 <- (1 - (1 - p.trap)*(1 - p.roll22)^10)
+p.trapmulch.10 <- (1 - (1 - p.trap)*(1 - p.mulch)^10)
+p.trapmulch22.10 <- (1 - (1 - p.trap)*(1 - p.mulch22)^10)
+p.roll.10 <- (1 - (1 - p.roll)^10)
+p.mulch.10 <- (1 - (1 - p.mulch)^10)
+p.roll22.10 <- (1 - (1 - p.roll22)^10)
+p.mulch22.10 <- (1 - (1 - p.mulch22)^10)
+
+# # Cumulative sample-level detection probability for samples within an occupied site
+# for(i in 1:150){
+# p_tree_n_roll[i] <- (1 - (1 - p.roll)^i)
+# p_tree_n_mulch[i] <- (1 - (1 - p.mulch)^i)
+# p_tree_n_trap[i] <- (1 - (1 - p.trap)^i)
+# p_tree_n_both[i] <- (1 - (1 - p_tree_n_roll[i])*(1 - p_tree_n_trap[i])^25)
+# }
+
+}
+
+
